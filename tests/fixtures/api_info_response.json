@@ -1,0 +1,85 @@
+{
+  "success": true,
+  "data": {
+    "SYNO.API.Auth": {
+      "path": "entry.cgi",
+      "minVersion": 1,
+      "maxVersion": 7
+    },
+    "SYNO.AudioStation.Info": {
+      "path": "AudioStation/info.cgi",
+      "minVersion": 1,
+      "maxVersion": 4
+    },
+    "SYNO.AudioStation.Song": {
+      "path": "AudioStation/song.cgi",
+      "minVersion": 1,
+      "maxVersion": 3
+    },
+    "SYNO.AudioStation.Album": {
+      "path": "AudioStation/album.cgi",
+      "minVersion": 1,
+      "maxVersion": 3
+    },
+    "SYNO.AudioStation.Artist": {
+      "path": "AudioStation/artist.cgi",
+      "minVersion": 1,
+      "maxVersion": 4
+    },
+    "SYNO.AudioStation.Playlist": {
+      "path": "AudioStation/playlist.cgi",
+      "minVersion": 1,
+      "maxVersion": 3
+    },
+    "SYNO.AudioStation.Stream": {
+      "path": "AudioStation/stream.cgi",
+      "minVersion": 1,
+      "maxVersion": 2
+    },
+    "SYNO.AudioStation.Search": {
+      "path": "AudioStation/search.cgi",
+      "minVersion": 1,
+      "maxVersion": 1
+    },
+    "SYNO.AudioStation.Pin": {
+      "path": "AudioStation/pinlist.cgi",
+      "minVersion": 1,
+      "maxVersion": 1
+    },
+    "SYNO.AudioStation.Cover": {
+      "path": "AudioStation/cover.cgi",
+      "minVersion": 1,
+      "maxVersion": 3
+    },
+    "SYNO.AudioStation.Lyrics": {
+      "path": "AudioStation/lyrics.cgi",
+      "minVersion": 1,
+      "maxVersion": 2
+    },
+    "SYNO.AudioStation.Radio": {
+      "path": "AudioStation/radio.cgi",
+      "minVersion": 1,
+      "maxVersion": 2
+    },
+    "SYNO.AudioStation.Folder": {
+      "path": "AudioStation/folder.cgi",
+      "minVersion": 1,
+      "maxVersion": 3
+    },
+    "SYNO.AudioStation.Genre": {
+      "path": "AudioStation/genre.cgi",
+      "minVersion": 1,
+      "maxVersion": 3
+    },
+    "SYNO.AudioStation.Composer": {
+      "path": "AudioStation/composer.cgi",
+      "minVersion": 1,
+      "maxVersion": 2
+    },
+    "SYNO.AudioStation.Download": {
+      "path": "AudioStation/download.cgi",
+      "minVersion": 1,
+      "maxVersion": 1
+    }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "success": true,
+  "data": {
+    "items": [
+      {
+        "id": "music_12345",
+        "title": "Comfortably Numb",
+        "type": "song"
+      },
+      {
+        "id": "album_42",
+        "title": "The Dark Side of the Moon",
+        "type": "album"
+      }
+    ]
+  }
+}

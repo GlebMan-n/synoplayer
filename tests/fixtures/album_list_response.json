@@ -1,0 +1,23 @@
+{
+  "success": true,
+  "data": {
+    "albums": [
+      {
+        "name": "The Dark Side of the Moon",
+        "artist": "Pink Floyd",
+        "album_artist": "Pink Floyd",
+        "year": 1973,
+        "display_artist": "Pink Floyd"
+      },
+      {
+        "name": "The Wall",
+        "artist": "Pink Floyd",
+        "album_artist": "Pink Floyd",
+        "year": 1979,
+        "display_artist": "Pink Floyd"
+      }
+    ],
+    "total": 42,
+    "offset": 0
+  }
+}

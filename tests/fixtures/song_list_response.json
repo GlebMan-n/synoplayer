@@ -1,0 +1,73 @@
+{
+  "success": true,
+  "data": {
+    "songs": [
+      {
+        "id": "music_12345",
+        "title": "Comfortably Numb",
+        "path": "/music/Pink Floyd/The Wall/Comfortably Numb.flac",
+        "additional": {
+          "song_tag": {
+            "title": "Comfortably Numb",
+            "album": "The Wall",
+            "artist": "Pink Floyd",
+            "album_artist": "Pink Floyd",
+            "composer": "David Gilmour, Roger Waters",
+            "genre": "Progressive Rock",
+            "year": 1979,
+            "track": 6,
+            "disc": 2,
+            "comment": ""
+          },
+          "song_audio": {
+            "duration": 382,
+            "bitrate": 1411,
+            "codec": "flac",
+            "container": "flac",
+            "frequency": 44100,
+            "channel": 2,
+            "lossless": true,
+            "filesize": 67234567
+          },
+          "song_rating": {
+            "rating": 5
+          }
+        }
+      },
+      {
+        "id": "music_12346",
+        "title": "Time",
+        "path": "/music/Pink Floyd/The Dark Side of the Moon/Time.flac",
+        "additional": {
+          "song_tag": {
+            "title": "Time",
+            "album": "The Dark Side of the Moon",
+            "artist": "Pink Floyd",
+            "album_artist": "Pink Floyd",
+            "composer": "Mason, Waters, Wright, Gilmour",
+            "genre": "Progressive Rock",
+            "year": 1973,
+            "track": 4,
+            "disc": 1,
+            "comment": ""
+          },
+          "song_audio": {
+            "duration": 413,
+            "bitrate": 1411,
+            "codec": "flac",
+            "container": "flac",
+            "frequency": 44100,
+            "channel": 2,
+            "lossless": true,
+            "filesize": 72345678
+          },
+          "song_rating": {
+            "rating": 4
+          }
+        }
+      }
+    ],
+    "total": 1234,
+    "offset": 0
+  }
+}
