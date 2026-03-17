@@ -1,0 +1,13 @@
+pub mod types;
+pub mod client;
+pub mod auth;
+pub mod song;
+pub mod album;
+pub mod artist;
+pub mod playlist;
+pub mod stream;
+pub mod search;
+pub mod pin;
+pub mod cover;
+pub mod lyrics;
+pub mod radio;

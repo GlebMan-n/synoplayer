@@ -1,0 +1,27 @@
+{
+  "success": true,
+  "data": {
+    "playlists": [
+      {
+        "id": "playlist_1",
+        "name": "My Favorites",
+        "library": "personal",
+        "songs_count": 25
+      },
+      {
+        "id": "playlist_2",
+        "name": "Road Trip",
+        "library": "personal",
+        "songs_count": 100
+      },
+      {
+        "id": "playlist_shared_1",
+        "name": "Party Mix",
+        "library": "shared",
+        "songs_count": 50
+      }
+    ],
+    "total": 3,
+    "offset": 0
+  }
+}
