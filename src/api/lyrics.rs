@@ -13,16 +13,26 @@ impl<'a> LyricsApi<'a> {
     }
 
     pub async fn get(&self, song_id: &str) -> Result<LyricsData> {
-        self.client.request(
-            "SYNO.AudioStation.Lyrics", 2, "getlyrics", &[("id", song_id)],
-        ).await
+        self.client
+            .request(
+                "SYNO.AudioStation.Lyrics",
+                2,
+                "getlyrics",
+                &[("id", song_id)],
+            )
+            .await
     }
 
     pub async fn set(&self, song_id: &str, lyrics: &str) -> Result<()> {
-        let _: serde_json::Value = self.client.request(
-            "SYNO.AudioStation.Lyrics", 2, "setlyrics",
-            &[("id", song_id), ("lyrics", lyrics)],
-        ).await?;
+        let _: serde_json::Value = self
+            .client
+            .request(
+                "SYNO.AudioStation.Lyrics",
+                2,
+                "setlyrics",
+                &[("id", song_id), ("lyrics", lyrics)],
+            )
+            .await?;
         Ok(())
     }
 }

@@ -163,9 +163,9 @@ impl CacheManager {
         let meta_path = self.storage.meta_path(song_id);
         if let Ok(meta_str) = std::fs::read_to_string(&meta_path) {
             if let Ok(mut meta) = serde_json::from_str::<serde_json::Value>(&meta_str) {
-                meta["last_accessed"] =
-                    serde_json::Value::String(chrono::Utc::now().to_rfc3339());
-                let _ = std::fs::write(&meta_path, serde_json::to_string(&meta).unwrap_or_default());
+                meta["last_accessed"] = serde_json::Value::String(chrono::Utc::now().to_rfc3339());
+                let _ =
+                    std::fs::write(&meta_path, serde_json::to_string(&meta).unwrap_or_default());
             }
         }
     }

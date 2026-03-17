@@ -13,20 +13,24 @@ impl<'a> PinApi<'a> {
     }
 
     pub async fn list(&self) -> Result<PinListData> {
-        self.client.request("SYNO.AudioStation.Pin", 1, "list", &[]).await
+        self.client
+            .request("SYNO.AudioStation.Pin", 1, "list", &[])
+            .await
     }
 
     pub async fn pin(&self, id: &str) -> Result<()> {
-        let _: serde_json::Value = self.client.request(
-            "SYNO.AudioStation.Pin", 1, "pin", &[("id", id)],
-        ).await?;
+        let _: serde_json::Value = self
+            .client
+            .request("SYNO.AudioStation.Pin", 1, "pin", &[("id", id)])
+            .await?;
         Ok(())
     }
 
     pub async fn unpin(&self, id: &str) -> Result<()> {
-        let _: serde_json::Value = self.client.request(
-            "SYNO.AudioStation.Pin", 1, "unpin", &[("id", id)],
-        ).await?;
+        let _: serde_json::Value = self
+            .client
+            .request("SYNO.AudioStation.Pin", 1, "unpin", &[("id", id)])
+            .await?;
         Ok(())
     }
 }

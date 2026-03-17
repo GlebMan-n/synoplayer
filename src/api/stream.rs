@@ -47,8 +47,8 @@ impl<'a> StreamApi<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
     use crate::api::types::ApiInfo;
+    use std::collections::HashMap;
 
     fn client_with_stream_path() -> SynoClient {
         let mut client = SynoClient::new("https://nas.local:5001");

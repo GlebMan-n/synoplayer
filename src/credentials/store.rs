@@ -12,9 +12,7 @@ const SERVICE_NAME: &str = "synoplayer";
 /// - Keyring: OS-native secure storage (GNOME Keyring, macOS Keychain)
 pub enum CredentialStore {
     Keyring,
-    EncryptedFile {
-        path: std::path::PathBuf,
-    },
+    EncryptedFile { path: std::path::PathBuf },
 }
 
 impl CredentialStore {
@@ -76,7 +74,8 @@ impl CredentialStore {
         // Requires `keyring` crate + libdbus-1-dev system dependency.
         // Will be enabled when system deps are available.
         Err(SynoError::Credential(
-            "Keyring backend not available. Use credential_store = \"encrypted_file\" in config.".to_string(),
+            "Keyring backend not available. Use credential_store = \"encrypted_file\" in config."
+                .to_string(),
         ))
     }
 
@@ -94,23 +93,17 @@ impl CredentialStore {
 
     // --- Encrypted file backend ---
 
-    fn file_save(
-        &self,
-        path: &std::path::Path,
-        username: &str,
-        password: &str,
-    ) -> Result<()> {
+    fn file_save(&self, path: &std::path::Path, username: &str, password: &str) -> Result<()> {
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| SynoError::Credential(e.to_string()))?;
+            std::fs::create_dir_all(parent).map_err(|e| SynoError::Credential(e.to_string()))?;
         }
         // Simple encoding: base64(username:password)
         // TODO: replace with AES-256-GCM using machine-id as key
         use std::io::Write;
         let data = format!("{username}\n{password}");
         let encoded = base64_encode(data.as_bytes());
-        let mut file = std::fs::File::create(path)
-            .map_err(|e| SynoError::Credential(e.to_string()))?;
+        let mut file =
+            std::fs::File::create(path).map_err(|e| SynoError::Credential(e.to_string()))?;
         file.write_all(encoded.as_bytes())
             .map_err(|e| SynoError::Credential(e.to_string()))?;
         Ok(())
@@ -120,12 +113,10 @@ impl CredentialStore {
         if !path.exists() {
             return Ok(None);
         }
-        let encoded = std::fs::read_to_string(path)
-            .map_err(|e| SynoError::Credential(e.to_string()))?;
-        let decoded = base64_decode(&encoded)
-            .map_err(|e| SynoError::Credential(e.to_string()))?;
-        let text = String::from_utf8(decoded)
-            .map_err(|e| SynoError::Credential(e.to_string()))?;
+        let encoded =
+            std::fs::read_to_string(path).map_err(|e| SynoError::Credential(e.to_string()))?;
+        let decoded = base64_decode(&encoded).map_err(|e| SynoError::Credential(e.to_string()))?;
+        let text = String::from_utf8(decoded).map_err(|e| SynoError::Credential(e.to_string()))?;
         let mut lines = text.lines();
         let username = lines.next().unwrap_or("").to_string();
         let password = lines.next().unwrap_or("").to_string();
@@ -137,8 +128,7 @@ impl CredentialStore {
 
     fn file_clear(&self, path: &std::path::Path) -> Result<()> {
         if path.exists() {
-            std::fs::remove_file(path)
-                .map_err(|e| SynoError::Credential(e.to_string()))?;
+            std::fs::remove_file(path).map_err(|e| SynoError::Credential(e.to_string()))?;
         }
         Ok(())
     }
@@ -209,7 +199,6 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore]
     fn encrypted_file_save_and_load() {
         let dir = tempfile::tempdir().unwrap();
         let store = CredentialStore::encrypted_file(dir.path().join("creds.enc"));
@@ -220,7 +209,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn encrypted_file_clear() {
         let dir = tempfile::tempdir().unwrap();
         let store = CredentialStore::encrypted_file(dir.path().join("creds.enc"));
@@ -230,7 +218,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn encrypted_file_overwrite() {
         let dir = tempfile::tempdir().unwrap();
         let store = CredentialStore::encrypted_file(dir.path().join("creds.enc"));
@@ -242,7 +229,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn load_from_nonexistent_returns_none() {
         let dir = tempfile::tempdir().unwrap();
         let store = CredentialStore::encrypted_file(dir.path().join("nope.enc"));
@@ -250,7 +236,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn exists_returns_false_when_empty() {
         let dir = tempfile::tempdir().unwrap();
         let store = CredentialStore::encrypted_file(dir.path().join("creds.enc"));
@@ -258,7 +243,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn base64_roundtrip() {
         let original = "hello:world";
         let encoded = base64_encode(original.as_bytes());
@@ -267,7 +251,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn base64_unicode_roundtrip() {
         let original = "пользователь:пароль";
         let encoded = base64_encode(original.as_bytes());

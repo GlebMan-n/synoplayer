@@ -100,11 +100,7 @@ impl CacheStorage {
         }
         let count = std::fs::read_dir(&self.base_path)?
             .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.path()
-                    .extension()
-                    .is_some_and(|ext| ext == "audio")
-            })
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "audio"))
             .count();
         Ok(count)
     }
