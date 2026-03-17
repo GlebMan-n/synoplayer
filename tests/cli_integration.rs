@@ -4,7 +4,6 @@ use assert_cmd::Command;
 use predicates::prelude::*;
 
 #[test]
-#[ignore]
 fn cli_help_shows_usage() {
     Command::cargo_bin("synoplayer")
         .unwrap()
@@ -16,7 +15,6 @@ fn cli_help_shows_usage() {
 }
 
 #[test]
-#[ignore]
 fn cli_version_shows_version() {
     Command::cargo_bin("synoplayer")
         .unwrap()
@@ -27,7 +25,6 @@ fn cli_version_shows_version() {
 }
 
 #[test]
-#[ignore]
 fn cli_no_args_shows_help() {
     Command::cargo_bin("synoplayer")
         .unwrap()
@@ -37,7 +34,6 @@ fn cli_no_args_shows_help() {
 }
 
 #[test]
-#[ignore]
 fn cli_unknown_command_fails() {
     Command::cargo_bin("synoplayer")
         .unwrap()
@@ -47,18 +43,17 @@ fn cli_unknown_command_fails() {
 }
 
 #[test]
-#[ignore]
 fn cli_config_show_works() {
     Command::cargo_bin("synoplayer")
         .unwrap()
         .arg("config")
         .arg("show")
         .assert()
-        .success();
+        .success()
+        .stdout(predicate::str::contains("[server]"));
 }
 
 #[test]
-#[ignore]
 fn cli_cache_status_works() {
     Command::cargo_bin("synoplayer")
         .unwrap()

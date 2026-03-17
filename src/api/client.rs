@@ -86,11 +86,9 @@ impl SynoClient {
                     _ => None,
                 }
             })
-            .ok_or_else(|| {
-                SynoError::Api {
-                    code: 102,
-                    message: format!("Unknown API: {api_name}. Run API discovery first."),
-                }
+            .ok_or_else(|| SynoError::Api {
+                code: 102,
+                message: format!("Unknown API: {api_name}. Run API discovery first."),
             })?;
 
         Ok(format!("{}/webapi/{}", self.base_url, path))
@@ -106,10 +104,7 @@ impl SynoClient {
     ) -> Result<T> {
         let url = self.build_url(api)?;
 
-        let mut params: Vec<(&str, &str)> = vec![
-            ("api", api),
-            ("method", method),
-        ];
+        let mut params: Vec<(&str, &str)> = vec![("api", api), ("method", method)];
         let version_str = version.to_string();
         params.push(("version", &version_str));
 
@@ -121,22 +116,15 @@ impl SynoClient {
 
         params.extend_from_slice(extra_params);
 
-        let response = self
-            .http
-            .get(&url)
-            .query(&params)
-            .send()
-            .await?;
+        let response = self.http.get(&url).query(&params).send().await?;
 
         let api_response: ApiResponse<T> = response.json().await?;
 
         if api_response.success {
-            api_response
-                .data
-                .ok_or_else(|| SynoError::Api {
-                    code: 100,
-                    message: "Success response with no data".to_string(),
-                })
+            api_response.data.ok_or_else(|| SynoError::Api {
+                code: 100,
+                message: "Success response with no data".to_string(),
+            })
         } else {
             let code = api_response.error.map(|e| e.code).unwrap_or(100);
             Err(SynoError::from_api_code(code))
@@ -210,21 +198,97 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // requires wiremock — enable when implementing auth
     async fn request_success_parses_data() {
-        // Will test with wiremock mock server
-        todo!()
+        use wiremock::matchers::{method, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(query_param("api", "SYNO.API.Auth"))
+            .and(query_param("method", "login"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                serde_json::json!({"success": true, "data": {"sid": "mock_sid_123"}}),
+            ))
+            .mount(&server)
+            .await;
+
+        let client = SynoClient::new(&server.uri());
+        let result: crate::api::types::AuthData = client
+            .request(
+                "SYNO.API.Auth",
+                6,
+                "login",
+                &[("account", "user"), ("passwd", "pass")],
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.sid, "mock_sid_123");
     }
 
     #[tokio::test]
-    #[ignore]
     async fn request_error_returns_syno_error() {
-        todo!()
+        use wiremock::matchers::{method, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(query_param("api", "SYNO.API.Auth"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"success": false, "error": {"code": 400}})),
+            )
+            .mount(&server)
+            .await;
+
+        let client = SynoClient::new(&server.uri());
+        let result: crate::error::Result<crate::api::types::AuthData> = client
+            .request(
+                "SYNO.API.Auth",
+                6,
+                "login",
+                &[("account", "bad"), ("passwd", "bad")],
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            crate::error::SynoError::InvalidCredentials
+        ));
     }
 
     #[tokio::test]
-    #[ignore]
     async fn request_session_expired_returns_session_error() {
-        todo!()
+        use wiremock::matchers::{method, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(query_param("api", "SYNO.AudioStation.Song"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"success": false, "error": {"code": 106}})),
+            )
+            .mount(&server)
+            .await;
+
+        let mut client = SynoClient::new(&server.uri());
+        // Manually set paths so build_url works
+        let mut paths = HashMap::new();
+        paths.insert(
+            "SYNO.AudioStation.Song".to_string(),
+            crate::api::types::ApiInfo {
+                path: "AudioStation/song.cgi".to_string(),
+                min_version: 1,
+                max_version: 3,
+            },
+        );
+        client.set_api_paths(paths);
+        client.set_sid("old_sid".to_string());
+
+        let result: crate::error::Result<serde_json::Value> = client
+            .request("SYNO.AudioStation.Song", 3, "list", &[])
+            .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().is_session_expired());
     }
 }

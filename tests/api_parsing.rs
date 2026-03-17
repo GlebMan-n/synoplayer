@@ -4,7 +4,6 @@
 use synoplayer::api::types::*;
 
 #[test]
-#[ignore]
 fn parse_api_info_response() {
     let json = include_str!("fixtures/api_info_response.json");
     let response: ApiResponse<ApiInfoMap> = serde_json::from_str(json).unwrap();
@@ -22,7 +21,6 @@ fn parse_api_info_response() {
 }
 
 #[test]
-#[ignore]
 fn parse_auth_login_success() {
     let json = include_str!("fixtures/auth_login_success.json");
     let response: ApiResponse<AuthData> = serde_json::from_str(json).unwrap();
@@ -33,7 +31,6 @@ fn parse_auth_login_success() {
 }
 
 #[test]
-#[ignore]
 fn parse_auth_login_wrong_password() {
     let json = include_str!("fixtures/auth_login_wrong_password.json");
     let response: ApiResponse<AuthData> = serde_json::from_str(json).unwrap();
@@ -43,7 +40,6 @@ fn parse_auth_login_wrong_password() {
 }
 
 #[test]
-#[ignore]
 fn parse_auth_login_2fa() {
     let json = include_str!("fixtures/auth_login_2fa_required.json");
     let response: ApiResponse<AuthData> = serde_json::from_str(json).unwrap();
@@ -53,7 +49,6 @@ fn parse_auth_login_2fa() {
 }
 
 #[test]
-#[ignore]
 fn parse_error_session_expired() {
     let json = include_str!("fixtures/error_session_expired.json");
     let response: ApiResponse<()> = serde_json::from_str(json).unwrap();
@@ -63,7 +58,6 @@ fn parse_error_session_expired() {
 }
 
 #[test]
-#[ignore]
 fn parse_error_no_permission() {
     let json = include_str!("fixtures/error_no_permission.json");
     let response: ApiResponse<()> = serde_json::from_str(json).unwrap();
@@ -73,7 +67,6 @@ fn parse_error_no_permission() {
 }
 
 #[test]
-#[ignore]
 fn parse_song_list_response() {
     let json = include_str!("fixtures/song_list_response.json");
     let response: ApiResponse<SongListData> = serde_json::from_str(json).unwrap();
@@ -95,18 +88,29 @@ fn parse_song_list_response() {
     assert_eq!(tag.track, 6);
     assert_eq!(tag.disc, 2);
 
-    let audio = song.additional.as_ref().unwrap().song_audio.as_ref().unwrap();
+    let audio = song
+        .additional
+        .as_ref()
+        .unwrap()
+        .song_audio
+        .as_ref()
+        .unwrap();
     assert_eq!(audio.duration, 382);
     assert_eq!(audio.codec, "flac");
     assert!(audio.lossless);
     assert_eq!(audio.frequency, 44100);
 
-    let rating = song.additional.as_ref().unwrap().song_rating.as_ref().unwrap();
+    let rating = song
+        .additional
+        .as_ref()
+        .unwrap()
+        .song_rating
+        .as_ref()
+        .unwrap();
     assert_eq!(rating.rating, 5);
 }
 
 #[test]
-#[ignore]
 fn parse_song_rating_range() {
     let json = include_str!("fixtures/song_list_response.json");
     let response: ApiResponse<SongListData> = serde_json::from_str(json).unwrap();
@@ -122,7 +126,6 @@ fn parse_song_rating_range() {
 }
 
 #[test]
-#[ignore]
 fn parse_album_list_response() {
     let json = include_str!("fixtures/album_list_response.json");
     let response: ApiResponse<AlbumListData> = serde_json::from_str(json).unwrap();
@@ -136,7 +139,6 @@ fn parse_album_list_response() {
 }
 
 #[test]
-#[ignore]
 fn parse_playlist_list_response() {
     let json = include_str!("fixtures/playlist_list_response.json");
     let response: ApiResponse<PlaylistListData> = serde_json::from_str(json).unwrap();
@@ -155,7 +157,6 @@ fn parse_playlist_list_response() {
 }
 
 #[test]
-#[ignore]
 fn parse_pin_list_response() {
     let json = include_str!("fixtures/pin_list_response.json");
     let response: ApiResponse<PinListData> = serde_json::from_str(json).unwrap();
@@ -168,7 +169,6 @@ fn parse_pin_list_response() {
 }
 
 #[test]
-#[ignore]
 fn error_code_mapping() {
     use synoplayer::error::SynoError;
 

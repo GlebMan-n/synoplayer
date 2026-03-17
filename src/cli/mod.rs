@@ -1,8 +1,8 @@
+pub mod config;
+pub mod library;
 pub mod play;
 pub mod playlist;
-pub mod library;
 pub mod search;
-pub mod config;
 
 use clap::{Parser, Subcommand};
 
@@ -47,9 +47,7 @@ pub enum Commands {
     /// Previous track
     Prev,
     /// Set volume (0-100)
-    Volume {
-        level: u8,
-    },
+    Volume { level: u8 },
     /// Show current track
     Now,
     /// Show play queue
@@ -75,13 +73,9 @@ pub enum Commands {
     /// List genres
     Genres,
     /// Browse folders
-    Folders {
-        path: Option<String>,
-    },
+    Folders { path: Option<String> },
     /// Search music
-    Search {
-        keyword: String,
-    },
+    Search { keyword: String },
     /// Manage playlists
     Playlist {
         #[command(subcommand)]
@@ -90,24 +84,15 @@ pub enum Commands {
     /// List all playlists
     Playlists,
     /// Rate a song (1-5)
-    Rate {
-        song_id: String,
-        rating: i32,
-    },
+    Rate { song_id: String, rating: i32 },
     /// Add to favorites
-    Favorite {
-        song_id: String,
-    },
+    Favorite { song_id: String },
     /// Remove from favorites
-    Unfavorite {
-        song_id: String,
-    },
+    Unfavorite { song_id: String },
     /// List favorites
     Favorites,
     /// Show lyrics
-    Lyrics {
-        song_id: Option<String>,
-    },
+    Lyrics { song_id: Option<String> },
     /// Internet radio
     Radio {
         #[command(subcommand)]

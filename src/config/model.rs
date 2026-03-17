@@ -203,8 +203,8 @@ impl AppConfig {
             return Ok(Self::default());
         }
         let content = std::fs::read_to_string(&path)?;
-        let config: Self = toml::from_str(&content)
-            .map_err(|e| crate::error::SynoError::Config(e.to_string()))?;
+        let config: Self =
+            toml::from_str(&content).map_err(|e| crate::error::SynoError::Config(e.to_string()))?;
         Ok(config)
     }
 
@@ -226,7 +226,6 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore]
     fn parse_full_config() {
         let toml_str = r#"
         [server]
@@ -270,7 +269,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn defaults_when_optional_missing() {
         let toml_str = r#"
         [server]
@@ -286,7 +284,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn empty_string_parses_to_defaults() {
         let config: AppConfig = toml::from_str("").unwrap();
         assert_eq!(config.server.host, "localhost");
@@ -294,7 +291,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn serialize_roundtrip() {
         let config = AppConfig::default();
         let serialized = toml::to_string(&config).unwrap();
@@ -303,7 +299,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn base_url_https() {
         let mut config = AppConfig::default();
         config.server.host = "nas.local".to_string();
@@ -313,7 +308,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn base_url_http() {
         let mut config = AppConfig::default();
         config.server.host = "nas.local".to_string();

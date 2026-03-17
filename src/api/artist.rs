@@ -15,12 +15,14 @@ impl<'a> ArtistApi<'a> {
     pub async fn list(&self, offset: i64, limit: i64) -> Result<ArtistListData> {
         let offset_str = offset.to_string();
         let limit_str = limit.to_string();
-        self.client.request(
-            "SYNO.AudioStation.Artist",
-            4,
-            "list",
-            &[("offset", &offset_str), ("limit", &limit_str)],
-        ).await
+        self.client
+            .request(
+                "SYNO.AudioStation.Artist",
+                4,
+                "list",
+                &[("offset", &offset_str), ("limit", &limit_str)],
+            )
+            .await
     }
 }
 
