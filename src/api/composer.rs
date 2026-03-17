@@ -1,40 +1,28 @@
 use crate::api::client::SynoClient;
+use crate::api::types::ComposerListData;
 use crate::error::Result;
 
-/// Internet radio operations (SYNO.AudioStation.Radio).
-pub struct RadioApi<'a> {
+/// Operations on composers (SYNO.AudioStation.Composer).
+pub struct ComposerApi<'a> {
     client: &'a SynoClient,
 }
 
-impl<'a> RadioApi<'a> {
+impl<'a> ComposerApi<'a> {
     pub fn new(client: &'a SynoClient) -> Self {
         Self { client }
     }
 
-    pub async fn list(&self, offset: i64, limit: i64) -> Result<serde_json::Value> {
+    pub async fn list(&self, offset: i64, limit: i64) -> Result<ComposerListData> {
         let offset_str = offset.to_string();
         let limit_str = limit.to_string();
         self.client
             .request(
-                "SYNO.AudioStation.Radio",
+                "SYNO.AudioStation.Composer",
                 2,
                 "list",
                 &[("offset", &offset_str), ("limit", &limit_str)],
             )
             .await
-    }
-
-    pub async fn add(&self, title: &str, url: &str) -> Result<()> {
-        let _: serde_json::Value = self
-            .client
-            .request(
-                "SYNO.AudioStation.Radio",
-                2,
-                "add",
-                &[("title", title), ("url", url)],
-            )
-            .await?;
-        Ok(())
     }
 }
 
@@ -47,13 +35,16 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[tokio::test]
-    async fn list_radio_stations() {
+    async fn list_composers_parses_response() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(query_param("api", "SYNO.AudioStation.Radio"))
+            .and(query_param("api", "SYNO.AudioStation.Composer"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "success": true,
-                "data": {"radios": [{"id": "1", "title": "BBC Radio", "url": "http://bbc.co.uk/stream"}]}
+                "data": {
+                    "composers": [{"name": "Bach"}, {"name": "Mozart"}],
+                    "total": 2, "offset": 0
+                }
             })))
             .mount(&server)
             .await;
@@ -62,17 +53,18 @@ mod tests {
         client.set_sid("sid".to_string());
         let mut paths = HashMap::new();
         paths.insert(
-            "SYNO.AudioStation.Radio".to_string(),
+            "SYNO.AudioStation.Composer".to_string(),
             ApiInfo {
-                path: "AudioStation/radio.cgi".to_string(),
+                path: "AudioStation/composer.cgi".to_string(),
                 min_version: 1,
                 max_version: 2,
             },
         );
         client.set_api_paths(paths);
 
-        let api = RadioApi::new(&client);
+        let api = ComposerApi::new(&client);
         let data = api.list(0, 50).await.unwrap();
-        assert!(data.is_object());
+        assert_eq!(data.total, 2);
+        assert_eq!(data.composers[0].name, "Bach");
     }
 }

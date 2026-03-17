@@ -32,9 +32,28 @@ impl<'a> CoverApi<'a> {
 
 #[cfg(test)]
 mod tests {
-    #[tokio::test]
-    #[ignore]
-    async fn get_cover_returns_image_bytes() {
-        todo!()
+    use super::*;
+    use crate::api::types::ApiInfo;
+    use std::collections::HashMap;
+
+    #[test]
+    fn cover_url_contains_song_id() {
+        let mut client = SynoClient::new("https://nas:5001");
+        client.set_sid("sid".to_string());
+        let mut paths = HashMap::new();
+        paths.insert(
+            "SYNO.AudioStation.Cover".to_string(),
+            ApiInfo {
+                path: "AudioStation/cover.cgi".to_string(),
+                min_version: 1,
+                max_version: 3,
+            },
+        );
+        client.set_api_paths(paths);
+
+        let api = CoverApi::new(&client);
+        let url = api.song_cover_url("music_123").unwrap();
+        assert!(url.contains("music_123"));
+        assert!(url.contains("getsongcover"));
     }
 }

@@ -12,16 +12,29 @@ impl<'a> AlbumApi<'a> {
         Self { client }
     }
 
-    pub async fn list(&self, offset: i64, limit: i64) -> Result<AlbumListData> {
+    pub async fn list(
+        &self,
+        offset: i64,
+        limit: i64,
+        artist: Option<&str>,
+        genre: Option<&str>,
+    ) -> Result<AlbumListData> {
         let offset_str = offset.to_string();
         let limit_str = limit.to_string();
+        let mut params = vec![
+            ("offset", offset_str.as_str()),
+            ("limit", limit_str.as_str()),
+            ("sort_by", "name"),
+            ("sort_direction", "asc"),
+        ];
+        if let Some(a) = artist {
+            params.push(("artist", a));
+        }
+        if let Some(g) = genre {
+            params.push(("genre", g));
+        }
         self.client
-            .request(
-                "SYNO.AudioStation.Album",
-                3,
-                "list",
-                &[("offset", &offset_str), ("limit", &limit_str)],
-            )
+            .request("SYNO.AudioStation.Album", 3, "list", &params)
             .await
     }
 }
@@ -60,7 +73,7 @@ mod tests {
         client.set_api_paths(paths);
 
         let api = AlbumApi::new(&client);
-        let data = api.list(0, 50).await.unwrap();
+        let data = api.list(0, 50, None, None).await.unwrap();
         assert_eq!(data.total, 42);
         assert_eq!(data.albums[0].name, "The Dark Side of the Moon");
     }

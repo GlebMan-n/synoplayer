@@ -121,10 +121,9 @@ impl SynoClient {
         let api_response: ApiResponse<T> = response.json().await?;
 
         if api_response.success {
-            api_response.data.ok_or_else(|| SynoError::Api {
-                code: 100,
-                message: "Success response with no data".to_string(),
-            })
+            // Some API methods return {"success":true} with no data field.
+            // In that case, return Default::default() (e.g. empty Value, empty struct).
+            Ok(api_response.data.unwrap_or_default())
         } else {
             let code = api_response.error.map(|e| e.code).unwrap_or(100);
             Err(SynoError::from_api_code(code))

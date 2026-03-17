@@ -12,29 +12,38 @@ impl<'a> PlaylistApi<'a> {
         Self { client }
     }
 
-    pub async fn list(&self, offset: i64, limit: i64) -> Result<PlaylistListData> {
+    pub async fn list(
+        &self,
+        offset: i64,
+        limit: i64,
+        library: Option<&str>,
+    ) -> Result<PlaylistListData> {
         let offset_str = offset.to_string();
         let limit_str = limit.to_string();
+        let mut params = vec![
+            ("offset", offset_str.as_str()),
+            ("limit", limit_str.as_str()),
+        ];
+        if let Some(lib) = library {
+            params.push(("library", lib));
+        }
         self.client
-            .request(
-                "SYNO.AudioStation.Playlist",
-                3,
-                "list",
-                &[("offset", &offset_str), ("limit", &limit_str)],
-            )
+            .request("SYNO.AudioStation.Playlist", 3, "list", &params)
             .await
     }
 
     pub async fn get_info(&self, id: &str) -> Result<PlaylistDetailData> {
+        let library = if id.contains("shared") {
+            "shared"
+        } else {
+            "personal"
+        };
         self.client
             .request(
                 "SYNO.AudioStation.Playlist",
                 3,
                 "getinfo",
-                &[
-                    ("id", id),
-                    ("additional", "song_tag,song_audio,song_rating"),
-                ],
+                &[("id", id), ("library", library), ("additional", "songs")],
             )
             .await
     }
@@ -47,6 +56,26 @@ impl<'a> PlaylistApi<'a> {
                 3,
                 "create",
                 &[("name", name), ("library", library)],
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Create a playlist with initial songs.
+    pub async fn create_with_songs(
+        &self,
+        name: &str,
+        library: &str,
+        song_ids: &[&str],
+    ) -> Result<()> {
+        let songs = song_ids.join(",");
+        let _: serde_json::Value = self
+            .client
+            .request(
+                "SYNO.AudioStation.Playlist",
+                3,
+                "create",
+                &[("name", name), ("library", library), ("songs", &songs)],
             )
             .await?;
         Ok(())
@@ -127,7 +156,7 @@ mod tests {
 
         let client = client_with_playlist_api(&server).await;
         let api = PlaylistApi::new(&client);
-        let data = api.list(0, 50).await.unwrap();
+        let data = api.list(0, 50, None).await.unwrap();
         assert_eq!(data.total, 3);
         assert_eq!(data.playlists[0].name, "My Favorites");
     }
@@ -154,8 +183,9 @@ mod tests {
         let client = client_with_playlist_api(&server).await;
         let api = PlaylistApi::new(&client);
         let data = api.get_info("playlist_1").await.unwrap();
-        assert_eq!(data.playlist.name, "My Favorites");
-        assert_eq!(data.playlist.songs.len(), 1);
+        let pl = data.into_playlist().unwrap();
+        assert_eq!(pl.name, "My Favorites");
+        assert_eq!(pl.songs.len(), 1);
     }
 
     #[tokio::test]

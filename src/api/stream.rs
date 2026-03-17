@@ -93,8 +93,31 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore]
     async fn stream_bytes_returns_audio_data() {
-        todo!()
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(b"fake audio bytes".to_vec()))
+            .mount(&server)
+            .await;
+
+        let mut client = SynoClient::new(&server.uri());
+        client.set_sid("sid".to_string());
+        let mut paths = HashMap::new();
+        paths.insert(
+            "SYNO.AudioStation.Stream".to_string(),
+            ApiInfo {
+                path: "AudioStation/stream.cgi".to_string(),
+                min_version: 1,
+                max_version: 2,
+            },
+        );
+        client.set_api_paths(paths);
+
+        let api = StreamApi::new(&client);
+        let bytes = api.stream_bytes("music_1").await.unwrap();
+        assert_eq!(&bytes[..], b"fake audio bytes");
     }
 }

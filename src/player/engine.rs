@@ -141,33 +141,84 @@ impl Drop for AudioEngine {
 
 /// Spawn an audio subprocess to play from a URL.
 fn spawn_audio_process(url: &str) -> crate::error::Result<Child> {
-    // Try players in order of preference
-    let players: &[(&str, &[&str])] = &[
-        ("ffplay", &["-nodisp", "-autoexit", "-loglevel", "quiet"]),
-        ("mpv", &["--no-video", "--really-quiet"]),
-        ("pw-play", &[]),
-        ("paplay", &[]),
-    ];
+    // 1. Players that can handle URLs directly
+    if which_exists("ffplay") {
+        return try_spawn(
+            "ffplay",
+            &["-nodisp", "-autoexit", "-loglevel", "quiet", url],
+        );
+    }
+    if which_exists("mpv") {
+        return try_spawn("mpv", &["--no-video", "--really-quiet", url]);
+    }
 
-    for (player, args) in players {
-        if which_exists(player) {
-            let mut cmd = Command::new(player);
-            cmd.args(*args).arg(url);
-            cmd.stdout(std::process::Stdio::null());
-            cmd.stderr(std::process::Stdio::null());
-
-            match cmd.spawn() {
-                Ok(child) => return Ok(child),
-                Err(_) => continue,
-            }
+    // 2. ffmpeg decoding to audio output
+    if which_exists("ffmpeg") {
+        // Try ALSA first, then PulseAudio
+        if let Ok(child) = try_spawn(
+            "ffmpeg",
+            &["-i", url, "-loglevel", "quiet", "-f", "alsa", "default"],
+        ) {
+            return Ok(child);
+        }
+        if let Ok(child) = try_spawn(
+            "ffmpeg",
+            &["-i", url, "-loglevel", "quiet", "-f", "pulse", "default"],
+        ) {
+            return Ok(child);
         }
     }
 
-    // Fallback: try curl piped to aplay (for raw PCM streams)
-    // This won't work for most formats, but it's a last resort
+    // 3. GStreamer pipeline
+    if which_exists("gst-launch-1.0") {
+        let pipeline = format!(
+            "souphttpsrc location={url} ! decodebin ! audioconvert ! audioresample ! autoaudiosink"
+        );
+        return try_spawn("gst-launch-1.0", &[&pipeline]);
+    }
+
+    // 4. curl piped through ffmpeg to audio device
+    if which_exists("curl") && which_exists("ffmpeg") {
+        let shell_cmd = format!(
+            "curl -sLk '{}' | ffmpeg -i pipe:0 -loglevel quiet -f alsa default",
+            url
+        );
+        return try_spawn("sh", &["-c", &shell_cmd]);
+    }
+
+    // 5. curl piped to pw-play/paplay (only works for WAV/PCM, not MP3)
+    if which_exists("curl") {
+        if which_exists("pw-play") {
+            return try_spawn_shell(url, "pw-play -");
+        }
+        if which_exists("paplay") {
+            return try_spawn_shell(url, "paplay --raw");
+        }
+    }
+
     Err(crate::error::SynoError::Player(
-        "No audio player found. Install ffplay, mpv, or pipewire/pulseaudio.".to_string(),
+        "No audio player found. Install one of: ffplay, mpv, ffmpeg, or gstreamer.".to_string(),
     ))
+}
+
+fn try_spawn(cmd: &str, args: &[&str]) -> crate::error::Result<Child> {
+    Command::new(cmd)
+        .args(args)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| crate::error::SynoError::Player(format!("Failed to spawn {cmd}: {e}")))
+}
+
+/// Spawn `curl <url> | <shell_cmd>` via sh -c
+fn try_spawn_shell(url: &str, pipe_to: &str) -> crate::error::Result<Child> {
+    let shell_cmd = format!("curl -sLk '{}' | {}", url, pipe_to);
+    Command::new("sh")
+        .args(["-c", &shell_cmd])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| crate::error::SynoError::Player(format!("Failed to spawn pipe: {e}")))
 }
 
 fn which_exists(name: &str) -> bool {

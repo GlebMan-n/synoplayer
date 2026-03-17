@@ -60,6 +60,7 @@ impl SynoError {
             402 => "Permission denied",
             403 => "2-factor authentication code required",
             404 => "Failed to authenticate 2-factor code",
+            412 => "Playlist not found or corrupted (try recreating it via Audio Station UI)",
             _ => "Unknown API error",
         };
         if code == 106 || code == 119 {
