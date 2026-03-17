@@ -114,7 +114,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn initial_state_is_stopped() {
         let state = PlayerState::Stopped;
         assert!(state.is_stopped());
@@ -125,7 +124,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn play_creates_playing_state() {
         let state = PlayerState::play(sample_track());
         assert!(state.is_playing());
@@ -134,7 +132,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn pause_from_playing() {
         let mut state = PlayerState::play(sample_track());
         state.set_position(Duration::from_secs(30));
@@ -144,7 +141,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn resume_from_paused() {
         let mut state = PlayerState::play(sample_track());
         state.set_position(Duration::from_secs(60));
@@ -155,7 +151,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn pause_from_stopped_does_nothing() {
         let mut state = PlayerState::Stopped;
         state.pause();
@@ -163,7 +158,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn resume_from_stopped_does_nothing() {
         let mut state = PlayerState::Stopped;
         state.resume();
@@ -171,7 +165,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn stop_from_playing() {
         let mut state = PlayerState::play(sample_track());
         state.stop();
@@ -180,7 +173,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn stop_from_paused() {
         let mut state = PlayerState::play(sample_track());
         state.pause();
@@ -189,7 +181,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn track_info_accessible_in_playing_and_paused() {
         let state = PlayerState::play(sample_track());
         assert_eq!(state.track().unwrap().title, "Test Song");

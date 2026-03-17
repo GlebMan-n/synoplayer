@@ -112,8 +112,11 @@ pub struct SongRating {
 
 #[derive(Debug, Default, Deserialize)]
 pub struct SongListData {
+    #[serde(default)]
     pub songs: Vec<Song>,
+    #[serde(default)]
     pub total: i64,
+    #[serde(default)]
     pub offset: i64,
 }
 
@@ -135,7 +138,9 @@ pub struct Album {
 #[derive(Debug, Default, Deserialize)]
 pub struct AlbumListData {
     pub albums: Vec<Album>,
+    #[serde(default)]
     pub total: i64,
+    #[serde(default)]
     pub offset: i64,
 }
 
@@ -149,7 +154,9 @@ pub struct Artist {
 #[derive(Debug, Default, Deserialize)]
 pub struct ArtistListData {
     pub artists: Vec<Artist>,
+    #[serde(default)]
     pub total: i64,
+    #[serde(default)]
     pub offset: i64,
 }
 
@@ -168,7 +175,9 @@ pub struct Playlist {
 #[derive(Debug, Default, Deserialize)]
 pub struct PlaylistListData {
     pub playlists: Vec<Playlist>,
+    #[serde(default)]
     pub total: i64,
+    #[serde(default)]
     pub offset: i64,
 }
 
@@ -195,7 +204,9 @@ pub struct Genre {
 #[derive(Debug, Default, Deserialize)]
 pub struct GenreListData {
     pub genres: Vec<Genre>,
+    #[serde(default)]
     pub total: i64,
+    #[serde(default)]
     pub offset: i64,
 }
 
@@ -209,7 +220,9 @@ pub struct Composer {
 #[derive(Debug, Default, Deserialize)]
 pub struct ComposerListData {
     pub composers: Vec<Composer>,
+    #[serde(default)]
     pub total: i64,
+    #[serde(default)]
     pub offset: i64,
 }
 
@@ -227,7 +240,9 @@ pub struct Folder {
 #[derive(Debug, Default, Deserialize)]
 pub struct FolderListData {
     pub items: Vec<Folder>,
+    #[serde(default)]
     pub total: i64,
+    #[serde(default)]
     pub offset: i64,
 }
 

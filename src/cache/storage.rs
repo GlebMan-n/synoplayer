@@ -111,7 +111,6 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore]
     fn hash_id_is_deterministic() {
         let h1 = CacheStorage::hash_id("music_123");
         let h2 = CacheStorage::hash_id("music_123");
@@ -120,7 +119,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn hash_id_differs_for_different_ids() {
         let h1 = CacheStorage::hash_id("music_1");
         let h2 = CacheStorage::hash_id("music_2");
@@ -128,7 +126,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn write_and_read_roundtrip() {
         let dir = tempfile::tempdir().unwrap();
         let storage = CacheStorage::new(dir.path().to_path_buf());
@@ -139,7 +136,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn exists_returns_true_after_write() {
         let dir = tempfile::tempdir().unwrap();
         let storage = CacheStorage::new(dir.path().to_path_buf());
@@ -149,7 +145,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn delete_removes_file() {
         let dir = tempfile::tempdir().unwrap();
         let storage = CacheStorage::new(dir.path().to_path_buf());
@@ -159,7 +154,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn total_size_sums_files() {
         let dir = tempfile::tempdir().unwrap();
         let storage = CacheStorage::new(dir.path().to_path_buf());
@@ -170,7 +164,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn file_count_counts_audio_files() {
         let dir = tempfile::tempdir().unwrap();
         let storage = CacheStorage::new(dir.path().to_path_buf());
@@ -180,7 +173,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn read_nonexistent_returns_error() {
         let dir = tempfile::tempdir().unwrap();
         let storage = CacheStorage::new(dir.path().to_path_buf());
@@ -188,7 +180,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn content_hash_detects_changes() {
         let h1 = CacheStorage::hash_content(b"original");
         let h2 = CacheStorage::hash_content(b"modified");

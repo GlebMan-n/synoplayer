@@ -88,21 +88,89 @@ impl<'a> SongApi<'a> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::api::types::ApiInfo;
+    use std::collections::HashMap;
+    use wiremock::matchers::{method, query_param};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    async fn client_with_song_api(server: &MockServer) -> SynoClient {
+        let mut client = SynoClient::new(&server.uri());
+        client.set_sid("test_sid".to_string());
+        let mut paths = HashMap::new();
+        paths.insert(
+            "SYNO.AudioStation.Song".to_string(),
+            ApiInfo {
+                path: "AudioStation/song.cgi".to_string(),
+                min_version: 1,
+                max_version: 3,
+            },
+        );
+        client.set_api_paths(paths);
+        client
+    }
+
     #[tokio::test]
-    #[ignore]
     async fn list_songs_parses_response() {
-        todo!()
+        let server = MockServer::start().await;
+        let fixture = include_str!("../../tests/fixtures/song_list_response.json");
+        let body: serde_json::Value = serde_json::from_str(fixture).unwrap();
+
+        Mock::given(method("GET"))
+            .and(query_param("api", "SYNO.AudioStation.Song"))
+            .and(query_param("method", "list"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .mount(&server)
+            .await;
+
+        let client = client_with_song_api(&server).await;
+        let api = SongApi::new(&client);
+        let data = api.list(0, 50).await.unwrap();
+
+        assert_eq!(data.total, 1234);
+        assert_eq!(data.songs.len(), 2);
+        assert_eq!(data.songs[0].id, "music_12345");
     }
 
     #[tokio::test]
-    #[ignore]
     async fn search_songs_sends_keyword() {
-        todo!()
+        let server = MockServer::start().await;
+        let fixture = include_str!("../../tests/fixtures/song_list_response.json");
+        let body: serde_json::Value = serde_json::from_str(fixture).unwrap();
+
+        Mock::given(method("GET"))
+            .and(query_param("api", "SYNO.AudioStation.Song"))
+            .and(query_param("method", "search"))
+            .and(query_param("keyword", "Pink Floyd"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .mount(&server)
+            .await;
+
+        let client = client_with_song_api(&server).await;
+        let api = SongApi::new(&client);
+        let data = api.search("Pink Floyd", 0, 50).await.unwrap();
+
+        assert!(!data.songs.is_empty());
     }
 
     #[tokio::test]
-    #[ignore]
     async fn set_rating_sends_correct_params() {
-        todo!()
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(query_param("api", "SYNO.AudioStation.Song"))
+            .and(query_param("method", "setrating"))
+            .and(query_param("id", "music_123"))
+            .and(query_param("rating", "5"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"success": true, "data": {}})),
+            )
+            .mount(&server)
+            .await;
+
+        let client = client_with_song_api(&server).await;
+        let api = SongApi::new(&client);
+        api.set_rating("music_123", 5).await.unwrap();
     }
 }
