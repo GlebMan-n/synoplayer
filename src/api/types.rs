@@ -183,15 +183,62 @@ pub struct PlaylistListData {
 
 #[derive(Debug, Default, Deserialize)]
 pub struct PlaylistDetailData {
-    pub playlist: PlaylistDetail,
+    /// Some API versions return a single `playlist`, others an array `playlists`.
+    #[serde(default)]
+    pub playlist: Option<PlaylistDetail>,
+    #[serde(default)]
+    pub playlists: Option<Vec<PlaylistDetail>>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+impl PlaylistDetailData {
+    /// Get the playlist regardless of which field the API used.
+    pub fn into_playlist(self) -> Option<PlaylistDetail> {
+        self.playlist.or_else(|| {
+            self.playlists.and_then(|mut v| {
+                if v.is_empty() {
+                    None
+                } else {
+                    Some(v.remove(0))
+                }
+            })
+        })
+    }
+}
+
+#[derive(Debug, Default, Clone, Deserialize)]
 pub struct PlaylistDetail {
+    #[serde(default)]
     pub id: String,
+    #[serde(default)]
     pub name: String,
+    /// Songs may be at root level or inside `additional.songs`.
     #[serde(default)]
     pub songs: Vec<Song>,
+    #[serde(default)]
+    pub additional: Option<PlaylistAdditional>,
+}
+
+#[derive(Debug, Default, Clone, Deserialize)]
+pub struct PlaylistAdditional {
+    #[serde(default)]
+    pub songs: Vec<Song>,
+    #[serde(default)]
+    pub songs_total: i64,
+    #[serde(default)]
+    pub songs_offset: i64,
+}
+
+impl PlaylistDetail {
+    /// Get songs from either root or additional.
+    pub fn all_songs(&self) -> &[Song] {
+        if !self.songs.is_empty() {
+            &self.songs
+        } else if let Some(ref add) = self.additional {
+            &add.songs
+        } else {
+            &[]
+        }
+    }
 }
 
 // --- Genre ---
@@ -253,13 +300,19 @@ pub struct PinItem {
     pub id: String,
     #[serde(default)]
     pub title: String,
+    /// Display name (Audio Station uses `name` not `title` for pins).
+    #[serde(default)]
+    pub name: String,
     #[serde(rename = "type", default)]
     pub item_type: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
 pub struct PinListData {
+    #[serde(default)]
     pub items: Vec<PinItem>,
+    #[serde(default)]
+    pub total: i64,
 }
 
 // --- Search ---

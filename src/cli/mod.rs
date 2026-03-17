@@ -19,9 +19,9 @@ pub struct Cli {
 pub enum Commands {
     /// Login to Synology NAS
     Login {
-        /// Save credentials for auto-login
-        #[arg(long, default_value_t = true)]
-        save: bool,
+        /// Do not save credentials (one-time session)
+        #[arg(long)]
+        no_save: bool,
     },
     /// Logout from Synology NAS
     Logout,
@@ -72,6 +72,8 @@ pub enum Commands {
     Artists,
     /// List genres
     Genres,
+    /// List composers
+    Composers,
     /// Browse folders
     Folders { path: Option<String> },
     /// Search music
@@ -140,6 +142,14 @@ pub enum PlaylistAction {
     Remove { playlist: String, song_id: String },
     /// Play a playlist
     Play { name: String },
+    /// Import a .m3u playlist file from NAS filesystem
+    Import {
+        /// Path to .m3u file on NAS (e.g. /volume1/homes/user/music/playlists/My.m3u)
+        path: String,
+        /// Playlist name (defaults to filename without extension)
+        #[arg(long)]
+        name: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
