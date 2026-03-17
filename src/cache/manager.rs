@@ -189,7 +189,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn store_and_retrieve() {
         let dir = tempfile::tempdir().unwrap();
         let cache = CacheManager::new(test_config(dir.path()));
@@ -202,7 +201,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn miss_returns_none() {
         let dir = tempfile::tempdir().unwrap();
         let cache = CacheManager::new(test_config(dir.path()));
@@ -210,7 +208,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn disabled_cache_does_not_store() {
         let dir = tempfile::tempdir().unwrap();
         let mut config = test_config(dir.path());
@@ -222,7 +219,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn integrity_check_detects_corruption() {
         let dir = tempfile::tempdir().unwrap();
         let cache = CacheManager::new(test_config(dir.path()));
@@ -240,7 +236,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn status_reports_correct_stats() {
         let dir = tempfile::tempdir().unwrap();
         let cache = CacheManager::new(test_config(dir.path()));
@@ -256,7 +251,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn clear_removes_all() {
         let dir = tempfile::tempdir().unwrap();
         let cache = CacheManager::new(test_config(dir.path()));
@@ -269,7 +263,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn lru_eviction_removes_oldest() {
         let dir = tempfile::tempdir().unwrap();
         let mut config = test_config(dir.path());

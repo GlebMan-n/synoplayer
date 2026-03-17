@@ -214,7 +214,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn new_queue_is_empty() {
         let q = PlayQueue::new();
         assert!(q.is_empty());
@@ -223,7 +222,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn add_and_current() {
         let mut q = PlayQueue::new();
         q.add(song("a"));
@@ -233,7 +231,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn from_songs_sets_current_to_first() {
         let q = PlayQueue::from_songs(vec![song("x"), song("y"), song("z")]);
         assert_eq!(q.current().unwrap().id, "x");
@@ -241,14 +238,12 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn from_empty_songs_has_no_current() {
         let q = PlayQueue::from_songs(vec![]);
         assert!(q.current().is_none());
     }
 
     #[test]
-    #[ignore]
     fn next_advances() {
         let mut q = PlayQueue::from_songs(vec![song("a"), song("b"), song("c")]);
         assert!(q.next());
@@ -258,7 +253,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn next_at_end_returns_false() {
         let mut q = PlayQueue::from_songs(vec![song("a"), song("b")]);
         q.next();
@@ -267,7 +261,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn prev_goes_back() {
         let mut q = PlayQueue::from_songs(vec![song("a"), song("b"), song("c")]);
         q.next(); // b
@@ -277,7 +270,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn prev_at_start_returns_false() {
         let mut q = PlayQueue::from_songs(vec![song("a"), song("b")]);
         assert!(!q.prev());
@@ -285,7 +277,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn repeat_one_stays_on_track() {
         let mut q = PlayQueue::from_songs(vec![song("a"), song("b")]);
         q.set_repeat(RepeatMode::One);
@@ -294,7 +285,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn repeat_all_wraps_around() {
         let mut q = PlayQueue::from_songs(vec![song("a"), song("b")]);
         q.set_repeat(RepeatMode::All);
@@ -304,7 +294,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn repeat_all_prev_wraps_around() {
         let mut q = PlayQueue::from_songs(vec![song("a"), song("b"), song("c")]);
         q.set_repeat(RepeatMode::All);
@@ -313,7 +302,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn shuffle_preserves_all_songs() {
         let ids: Vec<String> = (0..10).map(|i| format!("s{i}")).collect();
         let songs: Vec<Song> = ids.iter().map(|id| song(id)).collect();
@@ -327,7 +315,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn shuffle_keeps_current_at_front() {
         let mut q = PlayQueue::from_songs(vec![song("a"), song("b"), song("c"), song("d")]);
         q.next(); // current = b
@@ -337,7 +324,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn clear_empties_queue() {
         let mut q = PlayQueue::from_songs(vec![song("a"), song("b")]);
         q.clear();
@@ -346,7 +332,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn remove_adjusts_index() {
         let mut q = PlayQueue::from_songs(vec![song("a"), song("b"), song("c")]);
         q.next(); // current = b (index 1)
@@ -356,7 +341,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn remove_current_adjusts() {
         let mut q = PlayQueue::from_songs(vec![song("a"), song("b"), song("c")]);
         q.next(); // current = b (index 1)
@@ -366,7 +350,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn remove_last_when_current_adjusts() {
         let mut q = PlayQueue::from_songs(vec![song("a"), song("b")]);
         q.next(); // current = b (index 1)
@@ -375,14 +358,12 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn next_on_empty_returns_false() {
         let mut q = PlayQueue::new();
         assert!(!q.next());
     }
 
     #[test]
-    #[ignore]
     fn prev_on_empty_returns_false() {
         let mut q = PlayQueue::new();
         assert!(!q.prev());
