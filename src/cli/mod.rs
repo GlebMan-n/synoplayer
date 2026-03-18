@@ -136,12 +136,22 @@ pub enum PlaylistAction {
     Create { name: String },
     /// Delete a playlist
     Delete { name: String },
+    /// Rename a playlist
+    Rename { name: String, new_name: String },
     /// Add a song to a playlist
     Add { playlist: String, song_id: String },
     /// Remove a song from a playlist
     Remove { playlist: String, song_id: String },
-    /// Play a playlist
-    Play { name: String },
+    /// Play entire playlist sequentially
+    Play {
+        name: String,
+        /// Start from track N (1-based)
+        #[arg(long, default_value_t = 1)]
+        from: usize,
+        /// Shuffle playback order
+        #[arg(long)]
+        shuffle: bool,
+    },
     /// Import a .m3u playlist file from NAS filesystem
     Import {
         /// Path to .m3u file on NAS (e.g. /volume1/homes/user/music/playlists/My.m3u)
@@ -149,6 +159,26 @@ pub enum PlaylistAction {
         /// Playlist name (defaults to filename without extension)
         #[arg(long)]
         name: Option<String>,
+    },
+    /// Create a smart playlist with filter rules
+    Smart {
+        /// Playlist name
+        name: String,
+        /// Filter by genre
+        #[arg(long)]
+        genre: Option<String>,
+        /// Filter by artist
+        #[arg(long)]
+        artist: Option<String>,
+        /// Minimum rating (0-5)
+        #[arg(long)]
+        min_rating: Option<i32>,
+        /// Filter by year (e.g. 2020)
+        #[arg(long)]
+        year: Option<i32>,
+        /// Maximum number of songs
+        #[arg(long, default_value_t = 100)]
+        limit: i64,
     },
 }
 

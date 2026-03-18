@@ -13,6 +13,15 @@ pub struct CacheStatus {
     pub path: PathBuf,
 }
 
+/// Metadata for a single cached entry.
+#[derive(Debug, Clone)]
+pub struct CacheEntry {
+    pub song_id: String,
+    pub cached_at: chrono::DateTime<chrono::Utc>,
+    pub last_accessed: chrono::DateTime<chrono::Utc>,
+    pub size_bytes: u64,
+}
+
 /// Manages audio file caching with LRU eviction and TTL.
 ///
 /// Responsible for cache policy (when to evict, what to keep).
@@ -136,14 +145,68 @@ impl CacheManager {
 
     /// Remove expired entries (older than ttl_days).
     pub fn cleanup_expired(&self) -> crate::error::Result<()> {
-        // TODO: iterate meta files, parse cached_at, delete if expired
+        if self.config.ttl_days > 0 {
+            self.clear_older_than_days(self.config.ttl_days)?;
+        }
         Ok(())
+    }
+
+    /// List all cache entries with metadata.
+    pub fn list_entries(&self) -> crate::error::Result<Vec<CacheEntry>> {
+        if !self.storage.base_path().exists() {
+            return Ok(vec![]);
+        }
+        let mut entries = Vec::new();
+        let read_dir = std::fs::read_dir(self.storage.base_path())
+            .map_err(|e| crate::error::SynoError::Cache(e.to_string()))?;
+        for entry in read_dir {
+            let entry = entry.map_err(|e| crate::error::SynoError::Cache(e.to_string()))?;
+            let path = entry.path();
+            if path.extension().is_some_and(|e| e == "meta") {
+                if let Ok(meta_str) = std::fs::read_to_string(&path) {
+                    if let Ok(meta) = serde_json::from_str::<serde_json::Value>(&meta_str) {
+                        let song_id = meta["song_id"].as_str().unwrap_or("").to_string();
+                        let cached_at = meta["cached_at"]
+                            .as_str()
+                            .and_then(|s| s.parse::<chrono::DateTime<chrono::Utc>>().ok())
+                            .unwrap_or_default();
+                        let last_accessed = meta["last_accessed"]
+                            .as_str()
+                            .and_then(|s| s.parse::<chrono::DateTime<chrono::Utc>>().ok())
+                            .unwrap_or(cached_at);
+                        let size_bytes = meta["size_bytes"].as_u64().unwrap_or(0);
+                        if !song_id.is_empty() {
+                            entries.push(CacheEntry {
+                                song_id,
+                                cached_at,
+                                last_accessed,
+                                size_bytes,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        Ok(entries)
+    }
+
+    /// Remove entries cached more than `days` days ago. Returns count removed.
+    pub fn clear_older_than_days(&self, days: u32) -> crate::error::Result<usize> {
+        let cutoff =
+            chrono::Utc::now() - chrono::Duration::days(days as i64);
+        let entries = self.list_entries()?;
+        let mut removed = 0;
+        for entry in entries {
+            if entry.cached_at < cutoff {
+                let _ = self.storage.delete(&entry.song_id);
+                removed += 1;
+            }
+        }
+        Ok(removed)
     }
 
     fn evict_if_needed(&self) -> crate::error::Result<()> {
         let max_bytes = self.config.max_size_mb * 1024 * 1024;
-        let target_bytes = (max_bytes as f64 * 0.9) as u64; // 10% hysteresis
-
         let current = self
             .storage
             .total_size()
@@ -153,8 +216,20 @@ impl CacheManager {
             return Ok(());
         }
 
-        // TODO: sort by last_accessed, delete oldest until under target_bytes
-        let _ = target_bytes;
+        let target_bytes = (max_bytes as f64 * 0.9) as u64;
+        let mut entries = self.list_entries()?;
+        entries.sort_by_key(|e| e.last_accessed);
+
+        let mut current_size = current;
+        for entry in entries {
+            if current_size <= target_bytes {
+                break;
+            }
+            let size = entry.size_bytes;
+            if self.storage.delete(&entry.song_id).is_ok() {
+                current_size = current_size.saturating_sub(size);
+            }
+        }
 
         Ok(())
     }
@@ -276,7 +351,57 @@ mod tests {
         cache.put("s2", &big_data, &hash).unwrap();
         cache.put("s3", &big_data, &hash).unwrap(); // total ~1.2MB > 1MB
 
-        // After eviction, oldest (s1) should be gone
-        // (this test will pass once eviction is fully implemented)
+        // After eviction, at least one of the oldest entries should be gone
+        let remaining = [
+            cache.contains("s1"),
+            cache.contains("s2"),
+            cache.contains("s3"),
+        ]
+        .iter()
+        .filter(|&&b| b)
+        .count();
+        assert!(remaining < 3, "eviction should have removed at least one entry");
+    }
+
+    #[test]
+    fn list_entries_returns_all_cached() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = CacheManager::new(test_config(dir.path()));
+        let hash1 = CacheStorage::hash_content(b"data1");
+        let hash2 = CacheStorage::hash_content(b"data2");
+        cache.put("song_a", b"data1", &hash1).unwrap();
+        cache.put("song_b", b"data2", &hash2).unwrap();
+
+        let entries = cache.list_entries().unwrap();
+        assert_eq!(entries.len(), 2);
+        let ids: Vec<&str> = entries.iter().map(|e| e.song_id.as_str()).collect();
+        assert!(ids.contains(&"song_a"));
+        assert!(ids.contains(&"song_b"));
+    }
+
+    #[test]
+    fn clear_older_than_days_removes_old_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = CacheManager::new(test_config(dir.path()));
+        let hash = CacheStorage::hash_content(b"data");
+        cache.put("old_song", b"data", &hash).unwrap();
+        cache.put("new_song", b"data", &hash).unwrap();
+
+        // Backdate the cached_at of old_song so it looks 60 days old
+        let meta_path = cache.storage.meta_path("old_song");
+        let old_date = (chrono::Utc::now() - chrono::Duration::days(60)).to_rfc3339();
+        let meta = serde_json::json!({
+            "song_id": "old_song",
+            "sha256": hash,
+            "cached_at": old_date,
+            "last_accessed": old_date,
+            "size_bytes": 4u64,
+        });
+        std::fs::write(meta_path, serde_json::to_string(&meta).unwrap()).unwrap();
+
+        let removed = cache.clear_older_than_days(30).unwrap();
+        assert_eq!(removed, 1);
+        assert!(!cache.contains("old_song"));
+        assert!(cache.contains("new_song"));
     }
 }

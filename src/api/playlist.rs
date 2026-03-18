@@ -115,6 +115,22 @@ impl<'a> PlaylistApi<'a> {
             .await?;
         Ok(())
     }
+
+    /// Create a smart playlist with filter rules.
+    pub async fn create_smart(&self, name: &str, rules: &[(&str, &str)], limit: i64) -> Result<()> {
+        let limit_str = limit.to_string();
+        let mut params = vec![
+            ("name", name),
+            ("library", "personal"),
+            ("limit", &limit_str),
+        ];
+        params.extend_from_slice(rules);
+        let _: serde_json::Value = self
+            .client
+            .request("SYNO.AudioStation.Playlist", 3, "createsmart", &params)
+            .await?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -204,5 +220,59 @@ mod tests {
         let client = client_with_playlist_api(&server).await;
         let api = PlaylistApi::new(&client);
         api.create("New Playlist", "personal").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn rename_playlist_sends_params() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(query_param("method", "rename"))
+            .and(query_param("id", "playlist_1"))
+            .and(query_param("new_name", "Renamed"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"success": true})),
+            )
+            .mount(&server)
+            .await;
+
+        let client = client_with_playlist_api(&server).await;
+        let api = PlaylistApi::new(&client);
+        api.rename("playlist_1", "Renamed").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn delete_playlist_sends_id() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(query_param("method", "delete"))
+            .and(query_param("id", "playlist_1"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"success": true})),
+            )
+            .mount(&server)
+            .await;
+
+        let client = client_with_playlist_api(&server).await;
+        let api = PlaylistApi::new(&client);
+        api.delete("playlist_1").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn update_songs_joins_ids() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(query_param("method", "updatesongs"))
+            .and(query_param("songs", "music_1,music_2,music_3"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"success": true})),
+            )
+            .mount(&server)
+            .await;
+
+        let client = client_with_playlist_api(&server).await;
+        let api = PlaylistApi::new(&client);
+        api.update_songs("playlist_1", &["music_1", "music_2", "music_3"])
+            .await
+            .unwrap();
     }
 }
