@@ -29,6 +29,36 @@ impl<'a> SongApi<'a> {
             .await
     }
 
+    /// List songs with optional filters.
+    pub async fn list_filtered(
+        &self,
+        offset: i64,
+        limit: i64,
+        artist: Option<&str>,
+        album: Option<&str>,
+        genre: Option<&str>,
+    ) -> Result<SongListData> {
+        let offset_str = offset.to_string();
+        let limit_str = limit.to_string();
+        let mut params = vec![
+            ("offset", offset_str.as_str()),
+            ("limit", limit_str.as_str()),
+            ("additional", "song_tag,song_audio,song_rating"),
+        ];
+        if let Some(a) = artist {
+            params.push(("artist", a));
+        }
+        if let Some(a) = album {
+            params.push(("album", a));
+        }
+        if let Some(g) = genre {
+            params.push(("genre", g));
+        }
+        self.client
+            .request("SYNO.AudioStation.Song", 3, "list", &params)
+            .await
+    }
+
     pub async fn search(&self, keyword: &str, offset: i64, limit: i64) -> Result<SongListData> {
         let offset_str = offset.to_string();
         let limit_str = limit.to_string();

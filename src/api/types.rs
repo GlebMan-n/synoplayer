@@ -335,6 +335,27 @@ pub struct LyricsData {
     pub lyrics: String,
 }
 
+// --- Radio ---
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct RadioStation {
+    pub id: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub url: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct RadioListData {
+    #[serde(default)]
+    pub radios: Vec<RadioStation>,
+    #[serde(default)]
+    pub total: i64,
+    #[serde(default)]
+    pub offset: i64,
+}
+
 // --- Audio Station Info ---
 
 #[derive(Debug, Default, Deserialize)]

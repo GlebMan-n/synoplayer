@@ -3,6 +3,7 @@ use std::time::Duration;
 use clap::Parser;
 use synoplayer::api::auth::AuthApi;
 use synoplayer::api::client::SynoClient;
+use synoplayer::api::radio::RadioApi;
 use synoplayer::api::song::SongApi;
 use synoplayer::api::stream::StreamApi;
 use synoplayer::cache::manager::CacheManager;
@@ -275,11 +276,15 @@ async fn main() -> anyhow::Result<()> {
         cli::Commands::Playlists => {
             let client = connect(&config).await?;
             let api = synoplayer::api::playlist::PlaylistApi::new(&client);
-            // Fetch all playlists without library filter (API returns both)
-            let data = api.list(0, 200, None).await?;
+            // API requires explicit library param — query both and merge
+            let mut all_playlists = Vec::new();
+            for lib in &["personal", "shared"] {
+                let data = api.list(0, 200, Some(lib)).await?;
+                all_playlists.extend(data.playlists);
+            }
 
-            println!("Playlists ({}):", data.playlists.len());
-            for pl in &data.playlists {
+            println!("Playlists ({}):", all_playlists.len());
+            for pl in &all_playlists {
                 let count = pl.songs_count.unwrap_or(0);
                 println!(
                     "  [{}] {} ({} songs, {})",
@@ -365,17 +370,88 @@ async fn main() -> anyhow::Result<()> {
                     status.max_size_bytes as f64 / 1_048_576.0
                 );
             }
-            cli::CacheAction::Clear { older: _ } => {
+            cli::CacheAction::Clear { older } => {
                 let cache = CacheManager::new(config.cache.clone());
-                cache.clear()?;
-                println!("Cache cleared.");
+                if let Some(days_str) = older {
+                    let days: u32 = days_str.parse().map_err(|_| {
+                        anyhow::anyhow!("Invalid --older value '{days_str}': expected number of days")
+                    })?;
+                    let removed = cache.clear_older_than_days(days)?;
+                    println!("Removed {removed} entries older than {days} days.");
+                } else {
+                    cache.clear()?;
+                    println!("Cache cleared.");
+                }
             }
-            _ => {
-                eprintln!("Not yet implemented.");
+            cli::CacheAction::List => {
+                let cache = CacheManager::new(config.cache.clone());
+                let entries = cache.list_entries()?;
+                if entries.is_empty() {
+                    println!("Cache is empty.");
+                } else {
+                    println!("Cached tracks ({}):", entries.len());
+                    for entry in &entries {
+                        println!(
+                            "  [{}] cached: {} | size: {:.1} KB | accessed: {}",
+                            entry.song_id,
+                            entry.cached_at.format("%Y-%m-%d %H:%M"),
+                            entry.size_bytes as f64 / 1024.0,
+                            entry.last_accessed.format("%Y-%m-%d %H:%M"),
+                        );
+                    }
+                }
+            }
+            cli::CacheAction::Preload { playlist } => {
+                let client = connect(&config).await?;
+                let playlist_api = synoplayer::api::playlist::PlaylistApi::new(&client);
+                let stream_api = StreamApi::new(&client);
+                let cache = CacheManager::new(config.cache.clone());
+
+                if !cache.is_enabled() {
+                    eprintln!("Cache is disabled. Enable it in config first.");
+                    std::process::exit(1);
+                }
+
+                let pl_id = resolve_playlist_id(&playlist_api, &playlist).await?;
+                let pl = get_playlist_detail(&playlist_api, &pl_id).await?;
+                let songs = pl.all_songs();
+
+                if songs.is_empty() {
+                    eprintln!("Playlist '{playlist}' is empty.");
+                } else {
+                    println!(
+                        "Preloading playlist '{}' ({} songs)...",
+                        pl.name,
+                        songs.len()
+                    );
+                    let mut cached = 0usize;
+                    let mut skipped = 0usize;
+                    for song in songs {
+                        if cache.contains(&song.id) {
+                            skipped += 1;
+                            continue;
+                        }
+                        let url = stream_api.stream_url(&song.id)?;
+                        match client.http().get(&url).send().await {
+                            Ok(resp) => match resp.bytes().await {
+                                Ok(data) => {
+                                    let hash = synoplayer::cache::storage::CacheStorage::hash_content(&data);
+                                    cache.put(&song.id, &data, &hash)?;
+                                    cached += 1;
+                                    println!("  + {}", song.title);
+                                }
+                                Err(e) => eprintln!("  - {} (download error: {e})", song.title),
+                            },
+                            Err(e) => eprintln!("  - {} (request error: {e})", song.title),
+                        }
+                    }
+                    println!(
+                        "Done. Cached: {cached}, already cached: {skipped}."
+                    );
+                }
             }
         },
 
-        // --- Playlist subcommands ---
         // --- Playlist subcommands ---
         cli::Commands::Playlist { action } => {
             let client = connect(&config).await?;
@@ -386,7 +462,8 @@ async fn main() -> anyhow::Result<()> {
                     let pl = get_playlist_detail(&api, &pl_id).await?;
                     let songs = pl.all_songs();
                     println!("Playlist: {} ({} songs)", pl.name, songs.len());
-                    for song in songs {
+                    for (i, song) in songs.iter().enumerate() {
+                        print!("{:3}. ", i + 1);
                         print_song(song);
                     }
                 }
@@ -398,6 +475,11 @@ async fn main() -> anyhow::Result<()> {
                     let pl_id = resolve_playlist_id(&api, &name).await?;
                     api.delete(&pl_id).await?;
                     println!("Playlist '{name}' deleted.");
+                }
+                cli::PlaylistAction::Rename { name, new_name } => {
+                    let pl_id = resolve_playlist_id(&api, &name).await?;
+                    api.rename(&pl_id, &new_name).await?;
+                    println!("Playlist '{name}' renamed to '{new_name}'.");
                 }
                 cli::PlaylistAction::Add { playlist, song_id } => {
                     let pl_id = resolve_playlist_id(&api, &playlist).await?;
@@ -419,21 +501,132 @@ async fn main() -> anyhow::Result<()> {
                     api.update_songs(&pl_id, &ids).await?;
                     println!("Removed {song_id} from '{playlist}'.");
                 }
-                cli::PlaylistAction::Play { name } => {
+                cli::PlaylistAction::Play { name, from, shuffle } => {
                     let pl_id = resolve_playlist_id(&api, &name).await?;
                     let pl = get_playlist_detail(&api, &pl_id).await?;
                     let songs = pl.all_songs();
                     if songs.is_empty() {
                         eprintln!("Playlist '{name}' is empty.");
                     } else {
-                        let first = &songs[0];
+                        let mut queue: Vec<_> = songs.to_vec();
+                        if shuffle {
+                            use rand::seq::SliceRandom;
+                            queue.shuffle(&mut rand::thread_rng());
+                        }
+                        let start = if shuffle {
+                            0
+                        } else {
+                            (from.saturating_sub(1)).min(queue.len() - 1)
+                        };
+                        println!(
+                            "Playing playlist '{name}' ({} songs{}{})",
+                            queue.len(),
+                            if shuffle { ", shuffled" } else { "" },
+                            if !shuffle && start > 0 {
+                                format!(", starting from #{}", start + 1)
+                            } else {
+                                String::new()
+                            }
+                        );
                         let stream_api = StreamApi::new(&client);
-                        let url = stream_api.stream_url(&first.id)?;
-                        let track = track_from_song(first);
-                        println!("Playing playlist '{name}' ({} songs)", songs.len());
-                        println!("  {} - {}", track.artist, track.title);
                         let engine = AudioEngine::new();
-                        engine.play_url(&url, track)?;
+
+                        for (i, song) in queue[start..].iter().enumerate() {
+                            let track = track_from_song(song);
+                            let url = stream_api.stream_url(&song.id)?;
+                            println!(
+                                "[{}/{}] {} - {} [{}]",
+                                start + i + 1,
+                                queue.len(),
+                                track.artist,
+                                track.title,
+                                format_duration(track.duration)
+                            );
+                            engine.play_url(&url, track)?;
+                            loop {
+                                if engine.check_finished() {
+                                    break;
+                                }
+                                tokio::time::sleep(Duration::from_millis(500)).await;
+                            }
+                        }
+                        println!("Playlist finished.");
+                    }
+                }
+                cli::PlaylistAction::Import { path, name } => {
+                    import_m3u_playlist(&client, &api, &path, name.as_deref()).await?;
+                }
+                cli::PlaylistAction::Smart {
+                    name,
+                    genre,
+                    artist,
+                    min_rating,
+                    year,
+                    limit,
+                } => {
+                    let song_api = synoplayer::api::song::SongApi::new(&client);
+
+                    // Use server-side filtering by artist/genre via list_filtered
+                    let data = song_api
+                        .list_filtered(0, limit, artist.as_deref(), None, genre.as_deref())
+                        .await?;
+
+                    // Apply remaining client-side filters (rating, year)
+                    let matching: Vec<&synoplayer::api::types::Song> = data
+                        .songs
+                        .iter()
+                        .filter(|s| check_smart_filter(s, None, None, min_rating, year))
+                        .collect();
+
+                    if matching.is_empty() {
+                        eprintln!("No songs match the criteria.");
+                    } else {
+                        let ids: Vec<&str> = matching.iter().map(|s| s.id.as_str()).collect();
+                        api.create_with_songs(&name, "personal", &ids).await?;
+                        println!(
+                            "Smart playlist '{name}' created with {} songs.",
+                            ids.len()
+                        );
+                    }
+                }
+            }
+        }
+
+        // --- Radio ---
+        cli::Commands::Radio { action } => match action {
+            cli::RadioAction::List => {
+                let client = connect(&config).await?;
+                let api = RadioApi::new(&client);
+                let data = api.list(0, 200).await?;
+                if data.radios.is_empty() {
+                    println!("No radio stations configured.");
+                } else {
+                    println!("Radio stations ({}):", data.radios.len());
+                    for station in &data.radios {
+                        println!("  [{}] {} — {}", station.id, station.title, station.url);
+                    }
+                }
+            }
+            cli::RadioAction::Play { station } => {
+                let client = connect(&config).await?;
+                let api = RadioApi::new(&client);
+                let found = api.find(&station).await?;
+                match found {
+                    None => {
+                        eprintln!("Radio station not found: '{station}'");
+                        std::process::exit(1);
+                    }
+                    Some(s) => {
+                        println!("Playing radio: {} ({})", s.title, s.url);
+                        let track = TrackInfo {
+                            id: s.id.clone(),
+                            title: s.title.clone(),
+                            artist: "Radio".to_string(),
+                            album: String::new(),
+                            duration: std::time::Duration::ZERO,
+                        };
+                        let engine = AudioEngine::new();
+                        engine.play_url(&s.url, track)?;
                         loop {
                             if engine.check_finished() {
                                 break;
@@ -442,15 +635,21 @@ async fn main() -> anyhow::Result<()> {
                         }
                     }
                 }
-                cli::PlaylistAction::Import { path, name } => {
-                    import_m3u_playlist(&client, &api, &path, name.as_deref()).await?;
-                }
             }
-        }
+            cli::RadioAction::Add { name, url } => {
+                let client = connect(&config).await?;
+                let api = RadioApi::new(&client);
+                api.add(&name, &url).await?;
+                println!("Radio station '{name}' added.");
+            }
+        },
 
-        // --- Not yet implemented ---
-        _ => {
-            eprintln!("Not yet implemented. Run `synoplayer --help` for usage.");
+        // --- Shuffle / Repeat ---
+        cli::Commands::Shuffle { mode } => {
+            eprintln!("Shuffle {mode}: no active player session. Start playback first.");
+        }
+        cli::Commands::Repeat { mode } => {
+            eprintln!("Repeat {mode}: no active player session. Start playback first.");
         }
     }
 
@@ -717,6 +916,56 @@ async fn import_m3u_playlist(
     }
 
     Ok(())
+}
+
+/// Check if a song matches smart playlist filter criteria.
+fn check_smart_filter(
+    song: &synoplayer::api::types::Song,
+    genre: Option<&str>,
+    artist: Option<&str>,
+    min_rating: Option<i32>,
+    year: Option<i32>,
+) -> bool {
+    let add = match &song.additional {
+        Some(a) => a,
+        None => {
+            return genre.is_none() && artist.is_none() && min_rating.is_none() && year.is_none();
+        }
+    };
+
+    if let Some(g) = genre {
+        let song_genre = add
+            .song_tag
+            .as_ref()
+            .map(|t| t.genre.as_str())
+            .unwrap_or("");
+        if !song_genre.to_lowercase().contains(&g.to_lowercase()) {
+            return false;
+        }
+    }
+    if let Some(a) = artist {
+        let song_artist = add
+            .song_tag
+            .as_ref()
+            .map(|t| t.artist.as_str())
+            .unwrap_or("");
+        if !song_artist.to_lowercase().contains(&a.to_lowercase()) {
+            return false;
+        }
+    }
+    if let Some(min) = min_rating {
+        let rating = add.song_rating.as_ref().map(|r| r.rating).unwrap_or(0);
+        if rating < min {
+            return false;
+        }
+    }
+    if let Some(y) = year {
+        let song_year = add.song_tag.as_ref().map(|t| t.year).unwrap_or(0);
+        if song_year != y {
+            return false;
+        }
+    }
+    true
 }
 
 /// Parse a local .m3u file, returning non-comment, non-empty lines.
