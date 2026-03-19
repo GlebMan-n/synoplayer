@@ -110,6 +110,19 @@ pub enum Commands {
         #[arg(default_value = "off")]
         mode: String,
     },
+    /// Download a track to local file
+    Download {
+        /// Song ID or name
+        song_id: String,
+        /// Output file path (default: current dir, auto-named)
+        #[arg(long, short)]
+        output: Option<String>,
+    },
+    /// View or manage playback history
+    History {
+        #[command(subcommand)]
+        action: Option<HistoryAction>,
+    },
     /// Cache management
     Cache {
         #[command(subcommand)]
@@ -151,6 +164,9 @@ pub enum PlaylistAction {
         /// Shuffle playback order
         #[arg(long)]
         shuffle: bool,
+        /// Repeat mode: off, one, all
+        #[arg(long, default_value = "off")]
+        repeat: String,
     },
     /// Import a .m3u playlist file from NAS filesystem
     Import {
@@ -190,6 +206,12 @@ pub enum RadioAction {
     Play { station: String },
     /// Add a radio station
     Add { name: String, url: String },
+}
+
+#[derive(Subcommand)]
+pub enum HistoryAction {
+    /// Clear playback history
+    Clear,
 }
 
 #[derive(Subcommand)]

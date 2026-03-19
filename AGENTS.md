@@ -259,12 +259,12 @@ GET /webapi/AudioStation/stream.cgi/0.mp3?api=SYNO.AudioStation.Stream&version=2
 ### Этап 7: Дополнительные функции
 **Цель**: Паритет с веб-плеером
 
-- [ ] Тексты песен (`Lyrics.getlyrics`)
-- [ ] Интернет-радио (`Radio.list`, `Radio.add`)
-- [ ] Shuffle / Repeat режимы
+- [x] Тексты песен (`Lyrics.getlyrics`)
+- [x] Интернет-радио (`Radio.list`, `Radio.add`)
+- [x] Shuffle / Repeat режимы
 - [ ] Эквалайзер (если поддерживает rodio/symphonia)
-- [ ] История воспроизведения (локально)
-- [ ] Скачивание треков (`Download.download`)
+- [x] История воспроизведения (локально)
+- [x] Скачивание треков (`Download.download`)
 
 ### Этап 8: TUI (Text User Interface)
 **Цель**: Удобный интерфейс в терминале
