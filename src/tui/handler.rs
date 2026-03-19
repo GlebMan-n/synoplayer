@@ -206,16 +206,9 @@ async fn handle_folder_space(app: &mut App, ctx: &TuiContext<'_>) -> anyhow::Res
     };
 
     if item.is_directory() {
-        // Load directory contents and play all audio files
-        app.status = format!("Loading '{}'...", item.title);
-        let api = FolderApi::new(ctx.client);
-        let data = api.list(Some(&item.id), 0, 500).await?;
-        let songs: Vec<Song> = data
-            .items
-            .iter()
-            .filter(|f| !f.is_directory())
-            .map(|f| f.to_song())
-            .collect();
+        // Recursively collect all audio files from directory tree
+        app.status = format!("Scanning '{}'...", item.title);
+        let songs = collect_folder_recursive(ctx.client, &item.id, 10).await?;
         if songs.is_empty() {
             app.status = format!("No audio files in '{}'", item.title);
             return Ok(());
@@ -331,6 +324,37 @@ fn collect_folder_songs(app: &App) -> Vec<Song> {
         .filter(|f| !f.is_directory())
         .map(|f| f.to_song())
         .collect()
+}
+
+/// Recursively collect all audio files from a directory tree.
+/// Scans subdirectories up to `max_depth` levels deep.
+async fn collect_folder_recursive(
+    client: &SynoClient,
+    folder_id: &str,
+    max_depth: u32,
+) -> anyhow::Result<Vec<Song>> {
+    let api = FolderApi::new(client);
+    let data = api.list(Some(folder_id), 0, 500).await?;
+
+    let mut songs = Vec::new();
+    let mut subdirs = Vec::new();
+
+    for item in &data.items {
+        if item.is_directory() {
+            if max_depth > 0 {
+                subdirs.push(item.id.clone());
+            }
+        } else {
+            songs.push(item.to_song());
+        }
+    }
+
+    for dir_id in subdirs {
+        let sub_songs = Box::pin(collect_folder_recursive(client, &dir_id, max_depth - 1)).await?;
+        songs.extend(sub_songs);
+    }
+
+    Ok(songs)
 }
 
 /// Apply shuffle to queue if enabled. Returns the starting index.
