@@ -25,12 +25,13 @@ fn cli_version_shows_version() {
 }
 
 #[test]
-fn cli_no_args_shows_help() {
+fn cli_no_tui_shows_help() {
     Command::cargo_bin("synoplayer")
         .unwrap()
+        .arg("--no-tui")
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("Usage"));
+        .success()
+        .stdout(predicate::str::contains("Usage"));
 }
 
 #[test]

@@ -41,7 +41,6 @@ fn render_tabs(f: &mut Frame, area: Rect, app: &App) {
 
 fn render_content(f: &mut Frame, area: Rect, app: &mut App) {
     match app.active_tab {
-        Tab::Library => render_songs_table(f, area, app),
         Tab::Folders => render_folders(f, area, app),
         Tab::Playlists => render_playlists(f, area, app),
         Tab::Queue => render_queue(f, area, app),
@@ -49,20 +48,10 @@ fn render_content(f: &mut Frame, area: Rect, app: &mut App) {
 }
 
 fn render_songs_table(f: &mut Frame, area: Rect, app: &mut App) {
-    let (title, items, state) = if let Some(ref mut detail) = app.playlist_detail {
-        (
-            format!(" {} ", detail.name),
-            &detail.songs.items,
-            &mut detail.songs.state,
-        )
-    } else {
-        let count = app.songs.items.len();
-        (
-            format!(" Songs ({count}) "),
-            &app.songs.items,
-            &mut app.songs.state,
-        )
-    };
+    let detail = app.playlist_detail.as_mut().expect("render_songs_table called without playlist_detail");
+    let title = format!(" {} ", detail.name);
+    let items = &detail.songs.items;
+    let state = &mut detail.songs.state;
     let header = Row::new(vec!["Artist", "Title", "Album", "Duration"])
         .style(Style::default().fg(Color::DarkGray).bold())
         .bottom_margin(1);
@@ -117,16 +106,19 @@ fn render_folders(f: &mut Frame, area: Rect, app: &mut App) {
         .map(|np| np.track.id.as_str())
         .unwrap_or("");
 
-    let rows = app.folders.items.iter().map(|item| {
+    let rows = app.folders.items.iter().enumerate().map(|(i, item)| {
         if item.is_directory() {
+            let selected = app.selected_folders.contains(&i);
+            let marker = if selected { "[DIR] *" } else { "[DIR]" };
+            let color = if selected { Color::Green } else { Color::Yellow };
             Row::new(vec![
-                Cell::from("[DIR]"),
+                Cell::from(marker),
                 Cell::from(item.title.clone()),
                 Cell::from(""),
                 Cell::from(""),
                 Cell::from(""),
             ])
-            .style(Style::default().fg(Color::Yellow))
+            .style(Style::default().fg(color))
         } else {
             let song = item.to_song();
             let (artist, title, album, dur) = extract_song_display(&song);
@@ -352,6 +344,8 @@ fn render_help(f: &mut Frame, area: Rect, app: &App) {
         Span::raw(format!(":Repeat({repeat_state}) ")),
         Span::styled("Tab", Style::default().fg(Color::Yellow)),
         Span::raw(":Switch "),
+        Span::styled("Ins", Style::default().fg(Color::Yellow)),
+        Span::raw(":Select "),
         Span::styled("Esc", Style::default().fg(Color::Yellow)),
         Span::raw(":Back "),
         Span::styled("q", Style::default().fg(Color::Yellow)),

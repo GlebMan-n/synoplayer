@@ -105,6 +105,28 @@ pub async fn handle_key(app: &mut App, key: KeyEvent, ctx: &TuiContext<'_>) {
             );
         }
 
+        // --- Multi-select (Folders tab) ---
+        KeyCode::Insert => {
+            if app.active_tab == Tab::Folders
+                && let Some(idx) = app.folders.selected()
+                && let Some(item) = app.folders.items.get(idx)
+                && item.is_directory()
+            {
+                if app.selected_folders.contains(&idx) {
+                    app.selected_folders.remove(&idx);
+                } else {
+                    app.selected_folders.insert(idx);
+                }
+                let count = app.selected_folders.len();
+                app.status = if count > 0 {
+                    format!("{count} folders selected")
+                } else {
+                    "Selection cleared".to_string()
+                };
+                app.active_list_next();
+            }
+        }
+
         // --- Volume ---
         KeyCode::Char('+') | KeyCode::Char('=') => {
             app.volume = (app.volume + 5).min(100);
@@ -123,13 +145,6 @@ pub async fn handle_key(app: &mut App, key: KeyEvent, ctx: &TuiContext<'_>) {
 
 async fn handle_enter(app: &mut App, ctx: &TuiContext<'_>) -> anyhow::Result<()> {
     match app.active_tab {
-        Tab::Library => {
-            if let Some(idx) = app.songs.selected() {
-                let mut queue: Vec<Song> = app.songs.items.clone();
-                let start = apply_shuffle(app.shuffle, &mut queue, idx);
-                play_and_show_queue(app, ctx, queue, start).await?;
-            }
-        }
         Tab::Folders => {
             handle_folder_enter(app, ctx).await?;
         }
@@ -180,13 +195,6 @@ async fn handle_folder_enter(app: &mut App, ctx: &TuiContext<'_>) -> anyhow::Res
 
 async fn handle_space_play(app: &mut App, ctx: &TuiContext<'_>) -> anyhow::Result<()> {
     match app.active_tab {
-        Tab::Library => {
-            if let Some(idx) = app.songs.selected() {
-                let mut queue: Vec<Song> = app.songs.items.clone();
-                let start = apply_shuffle(app.shuffle, &mut queue, idx);
-                play_and_show_queue(app, ctx, queue, start).await?;
-            }
-        }
         Tab::Folders => {
             handle_folder_space(app, ctx).await?;
         }
@@ -199,7 +207,33 @@ async fn handle_space_play(app: &mut App, ctx: &TuiContext<'_>) -> anyhow::Resul
 }
 
 /// Space on a folder item: play directory contents or file.
+/// If folders are multi-selected via Insert, plays all selected directories.
 async fn handle_folder_space(app: &mut App, ctx: &TuiContext<'_>) -> anyhow::Result<()> {
+    // Multi-select mode: play all selected folders
+    if !app.selected_folders.is_empty() {
+        let mut indices: Vec<usize> = app.selected_folders.iter().copied().collect();
+        indices.sort();
+        app.status = format!("Scanning {} folders...", indices.len());
+        let mut all_songs = Vec::new();
+        for idx in &indices {
+            if let Some(item) = app.folders.items.get(*idx)
+                && item.is_directory()
+            {
+                let songs = collect_folder_recursive(ctx.client, &item.id, 10).await?;
+                all_songs.extend(songs);
+            }
+        }
+        app.selected_folders.clear();
+        if all_songs.is_empty() {
+            app.status = "No audio files in selected folders".to_string();
+            return Ok(());
+        }
+        let mut queue = all_songs;
+        let start = apply_shuffle(app.shuffle, &mut queue, 0);
+        play_and_show_queue(app, ctx, queue, start).await?;
+        return Ok(());
+    }
+
     let item = match app.folders.selected_item() {
         Some(f) => f.clone(),
         None => return Ok(()),
@@ -284,6 +318,7 @@ pub async fn load_folder(app: &mut App, ctx: &TuiContext<'_>) -> anyhow::Result<
     let data = api.list(folder_id, 0, 500).await?;
     let count = data.items.len();
     app.folders = StatefulList::with_items(data.items);
+    app.selected_folders.clear();
     app.status = format!("Loaded {count} items");
     Ok(())
 }

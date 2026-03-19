@@ -36,7 +36,23 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    match cli.command {
+    // Default: launch TUI when no subcommand given
+    let command = match cli.command {
+        Some(cmd) => cmd,
+        None => {
+            if cli.no_tui {
+                use clap::CommandFactory;
+                cli::Cli::command().print_help()?;
+                println!();
+                return Ok(());
+            }
+            let client = connect(&config).await?;
+            synoplayer::tui::run(client, config).await?;
+            return Ok(());
+        }
+    };
+
+    match command {
         // --- Config ---
         cli::Commands::Config { action } => match action {
             cli::ConfigAction::Show => {
@@ -792,6 +808,37 @@ async fn main() -> anyhow::Result<()> {
         cli::Commands::Repeat { mode } => {
             eprintln!("Repeat {mode}: no active player session. Start playback first.");
         }
+
+        // --- Completion ---
+        cli::Commands::Completion { shell, install } => {
+            use clap::CommandFactory;
+            use clap_complete::generate;
+
+            if install {
+                let script = generate_completion_script(shell);
+                let path = install_completion(shell, &script)?;
+                println!("Completions installed to {}", path.display());
+                match shell {
+                    clap_complete::Shell::Zsh => {
+                        let zfunc = dirs::home_dir()
+                            .unwrap_or_default()
+                            .join(".zfunc");
+                        println!(
+                            "Add to your ~/.zshrc if not already present:\n  \
+                             fpath+={}\n  autoload -Uz compinit && compinit",
+                            zfunc.display()
+                        );
+                    }
+                    clap_complete::Shell::Bash => {
+                        println!("Completions will be loaded automatically on next shell start.");
+                    }
+                    _ => {}
+                }
+            } else {
+                let mut cmd = cli::Cli::command();
+                generate(shell, &mut cmd, "synoplayer", &mut std::io::stdout());
+            }
+        }
     }
 
     Ok(())
@@ -829,20 +876,52 @@ async fn connect(config: &AppConfig) -> anyhow::Result<SynoClient> {
     anyhow::bail!("Not authenticated. Run `synoplayer login` first.")
 }
 
-/// Find a song by ID or search by name.
+/// Find a song by ID or search by name/artist.
+///
+/// Uses the global SearchApi which returns separate songs/artists/albums results.
+/// If the target matches an artist name, returns songs by that artist.
+/// Otherwise returns the best matching song by title.
 async fn find_song(
     client: &SynoClient,
     target: &str,
 ) -> anyhow::Result<synoplayer::api::types::Song> {
     let api = SongApi::new(client);
     if target.starts_with("music_") {
-        Ok(api.get_info(target).await?)
-    } else {
-        let data = api.search(target, 0, 1).await?;
-        data.songs.into_iter().next().ok_or_else(|| {
-            synoplayer::error::SynoError::Player(format!("No song found: {target}")).into()
-        })
+        return Ok(api.get_info(target).await?);
     }
+
+    let search_api = synoplayer::api::search::SearchApi::new(client);
+    let data = search_api.search(target, 0, 50).await?;
+
+    // Check for exact song title match first
+    for song in &data.songs {
+        let title = song
+            .additional
+            .as_ref()
+            .and_then(|a| a.song_tag.as_ref())
+            .map(|t| t.title.as_str())
+            .unwrap_or(&song.title);
+        if title.eq_ignore_ascii_case(target) {
+            return Ok(song.clone());
+        }
+    }
+
+    // Check if target matches an artist name — play songs by that artist
+    let artist_match = data
+        .artists
+        .iter()
+        .any(|a| a.name.eq_ignore_ascii_case(target));
+    if artist_match {
+        let artist_songs = api.list_filtered(0, 50, Some(target), None, None).await?;
+        if let Some(song) = artist_songs.songs.into_iter().next() {
+            return Ok(song);
+        }
+    }
+
+    // Fall back to first song result
+    data.songs.into_iter().next().ok_or_else(|| {
+        synoplayer::error::SynoError::Player(format!("No song found: {target}")).into()
+    })
 }
 
 // Shared playback helpers are in synoplayer::playback
@@ -1086,6 +1165,46 @@ fn check_smart_filter(
         }
     }
     true
+}
+
+/// Generate shell completion script as a string.
+fn generate_completion_script(shell: clap_complete::Shell) -> String {
+    use clap::CommandFactory;
+    use clap_complete::generate;
+    let mut buf = Vec::new();
+    let mut cmd = cli::Cli::command();
+    generate(shell, &mut cmd, "synoplayer", &mut buf);
+    String::from_utf8(buf).unwrap_or_default()
+}
+
+/// Install completion script to the standard location for the given shell.
+fn install_completion(
+    shell: clap_complete::Shell,
+    script: &str,
+) -> anyhow::Result<std::path::PathBuf> {
+    let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Cannot determine home directory"))?;
+    let path = match shell {
+        clap_complete::Shell::Bash => {
+            let dir = home.join(".local/share/bash-completion/completions");
+            std::fs::create_dir_all(&dir)?;
+            dir.join("synoplayer")
+        }
+        clap_complete::Shell::Zsh => {
+            let dir = home.join(".zfunc");
+            std::fs::create_dir_all(&dir)?;
+            dir.join("_synoplayer")
+        }
+        clap_complete::Shell::Fish => {
+            let dir = home.join(".config/fish/completions");
+            std::fs::create_dir_all(&dir)?;
+            dir.join("synoplayer.fish")
+        }
+        _ => {
+            anyhow::bail!("Auto-install not supported for {shell:?}. Use without --install to print to stdout.");
+        }
+    };
+    std::fs::write(&path, script)?;
+    Ok(path)
 }
 
 /// Parse a local .m3u file, returning non-comment, non-empty lines.

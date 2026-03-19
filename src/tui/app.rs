@@ -2,6 +2,8 @@ use std::time::{Duration, Instant};
 
 use ratatui::widgets::TableState;
 
+use std::collections::HashSet;
+
 use crate::api::types::{Folder, Playlist, Song};
 use crate::player::engine::AudioEngine;
 use crate::player::queue::RepeatMode;
@@ -9,18 +11,16 @@ use crate::player::state::TrackInfo;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
-    Library,
     Folders,
     Playlists,
     Queue,
 }
 
 impl Tab {
-    pub const ALL: &[Tab] = &[Tab::Library, Tab::Folders, Tab::Playlists, Tab::Queue];
+    pub const ALL: &[Tab] = &[Tab::Folders, Tab::Playlists, Tab::Queue];
 
     pub fn label(&self) -> &'static str {
         match self {
-            Tab::Library => "Library",
             Tab::Folders => "Folders",
             Tab::Playlists => "Playlists",
             Tab::Queue => "Queue",
@@ -142,12 +142,13 @@ pub struct App {
     pub active_tab: Tab,
 
     // Data lists
-    pub songs: StatefulList<Song>,
     pub playlists: StatefulList<Playlist>,
     pub playlist_detail: Option<PlaylistDetail>,
     pub folders: StatefulList<Folder>,
     /// Breadcrumb stack for folder navigation: (id, name).
     pub folder_stack: Vec<(String, String)>,
+    /// Indices of selected directories in Folders tab (for multi-select with Insert).
+    pub selected_folders: HashSet<usize>,
 
     // Playback
     pub queue: Vec<Song>,
@@ -170,12 +171,12 @@ impl App {
     pub fn new() -> Self {
         Self {
             running: true,
-            active_tab: Tab::Library,
-            songs: StatefulList::default(),
+            active_tab: Tab::Folders,
             playlists: StatefulList::default(),
             playlist_detail: None,
             folders: StatefulList::default(),
             folder_stack: Vec::new(),
+            selected_folders: HashSet::new(),
             queue: Vec::new(),
             now_playing: None,
             volume: 80,
@@ -228,7 +229,6 @@ impl App {
     /// Navigate up/down in the active tab's list.
     pub fn active_list_next(&mut self) {
         match self.active_tab {
-            Tab::Library => self.songs.next(),
             Tab::Folders => self.folders.next(),
             Tab::Playlists => {
                 if let Some(ref mut detail) = self.playlist_detail {
@@ -243,7 +243,6 @@ impl App {
 
     pub fn active_list_previous(&mut self) {
         match self.active_tab {
-            Tab::Library => self.songs.previous(),
             Tab::Folders => self.folders.previous(),
             Tab::Playlists => {
                 if let Some(ref mut detail) = self.playlist_detail {
@@ -258,7 +257,6 @@ impl App {
 
     pub fn active_list_page_down(&mut self, page: usize) {
         match self.active_tab {
-            Tab::Library => self.songs.page_down(page),
             Tab::Folders => self.folders.page_down(page),
             Tab::Playlists => {
                 if let Some(ref mut d) = self.playlist_detail {
@@ -273,7 +271,6 @@ impl App {
 
     pub fn active_list_page_up(&mut self, page: usize) {
         match self.active_tab {
-            Tab::Library => self.songs.page_up(page),
             Tab::Folders => self.folders.page_up(page),
             Tab::Playlists => {
                 if let Some(ref mut d) = self.playlist_detail {
@@ -346,15 +343,13 @@ mod tests {
     #[test]
     fn tab_switching() {
         let mut app = App::new();
-        assert_eq!(app.active_tab, Tab::Library);
-        app.next_tab();
         assert_eq!(app.active_tab, Tab::Folders);
         app.next_tab();
         assert_eq!(app.active_tab, Tab::Playlists);
         app.next_tab();
         assert_eq!(app.active_tab, Tab::Queue);
         app.next_tab();
-        assert_eq!(app.active_tab, Tab::Library); // wraps
+        assert_eq!(app.active_tab, Tab::Folders); // wraps
         app.prev_tab();
         assert_eq!(app.active_tab, Tab::Queue); // wraps back
     }
