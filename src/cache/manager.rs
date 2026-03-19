@@ -85,16 +85,14 @@ impl CacheManager {
         if self.config.verify_integrity {
             let actual_hash = CacheStorage::hash_content(&data);
             let meta_path = self.storage.meta_path(song_id);
-            if let Ok(meta_str) = std::fs::read_to_string(&meta_path) {
-                if let Ok(meta) = serde_json::from_str::<serde_json::Value>(&meta_str) {
-                    if let Some(expected_hash) = meta["sha256"].as_str() {
-                        if actual_hash != expected_hash {
-                            // Corrupted — delete and return None
-                            let _ = self.storage.delete(song_id);
-                            return Ok(None);
-                        }
-                    }
-                }
+            if let Ok(meta_str) = std::fs::read_to_string(&meta_path)
+                && let Ok(meta) = serde_json::from_str::<serde_json::Value>(&meta_str)
+                && let Some(expected_hash) = meta["sha256"].as_str()
+                && actual_hash != expected_hash
+            {
+                // Corrupted — delete and return None
+                let _ = self.storage.delete(song_id);
+                return Ok(None);
             }
 
             // Update last_accessed in meta
@@ -162,28 +160,27 @@ impl CacheManager {
         for entry in read_dir {
             let entry = entry.map_err(|e| crate::error::SynoError::Cache(e.to_string()))?;
             let path = entry.path();
-            if path.extension().is_some_and(|e| e == "meta") {
-                if let Ok(meta_str) = std::fs::read_to_string(&path) {
-                    if let Ok(meta) = serde_json::from_str::<serde_json::Value>(&meta_str) {
-                        let song_id = meta["song_id"].as_str().unwrap_or("").to_string();
-                        let cached_at = meta["cached_at"]
-                            .as_str()
-                            .and_then(|s| s.parse::<chrono::DateTime<chrono::Utc>>().ok())
-                            .unwrap_or_default();
-                        let last_accessed = meta["last_accessed"]
-                            .as_str()
-                            .and_then(|s| s.parse::<chrono::DateTime<chrono::Utc>>().ok())
-                            .unwrap_or(cached_at);
-                        let size_bytes = meta["size_bytes"].as_u64().unwrap_or(0);
-                        if !song_id.is_empty() {
-                            entries.push(CacheEntry {
-                                song_id,
-                                cached_at,
-                                last_accessed,
-                                size_bytes,
-                            });
-                        }
-                    }
+            if path.extension().is_some_and(|e| e == "meta")
+                && let Ok(meta_str) = std::fs::read_to_string(&path)
+                && let Ok(meta) = serde_json::from_str::<serde_json::Value>(&meta_str)
+            {
+                let song_id = meta["song_id"].as_str().unwrap_or("").to_string();
+                let cached_at = meta["cached_at"]
+                    .as_str()
+                    .and_then(|s| s.parse::<chrono::DateTime<chrono::Utc>>().ok())
+                    .unwrap_or_default();
+                let last_accessed = meta["last_accessed"]
+                    .as_str()
+                    .and_then(|s| s.parse::<chrono::DateTime<chrono::Utc>>().ok())
+                    .unwrap_or(cached_at);
+                let size_bytes = meta["size_bytes"].as_u64().unwrap_or(0);
+                if !song_id.is_empty() {
+                    entries.push(CacheEntry {
+                        song_id,
+                        cached_at,
+                        last_accessed,
+                        size_bytes,
+                    });
                 }
             }
         }
@@ -192,8 +189,7 @@ impl CacheManager {
 
     /// Remove entries cached more than `days` days ago. Returns count removed.
     pub fn clear_older_than_days(&self, days: u32) -> crate::error::Result<usize> {
-        let cutoff =
-            chrono::Utc::now() - chrono::Duration::days(days as i64);
+        let cutoff = chrono::Utc::now() - chrono::Duration::days(days as i64);
         let entries = self.list_entries()?;
         let mut removed = 0;
         for entry in entries {
@@ -236,12 +232,11 @@ impl CacheManager {
 
     fn touch_meta(&self, song_id: &str) {
         let meta_path = self.storage.meta_path(song_id);
-        if let Ok(meta_str) = std::fs::read_to_string(&meta_path) {
-            if let Ok(mut meta) = serde_json::from_str::<serde_json::Value>(&meta_str) {
-                meta["last_accessed"] = serde_json::Value::String(chrono::Utc::now().to_rfc3339());
-                let _ =
-                    std::fs::write(&meta_path, serde_json::to_string(&meta).unwrap_or_default());
-            }
+        if let Ok(meta_str) = std::fs::read_to_string(&meta_path)
+            && let Ok(mut meta) = serde_json::from_str::<serde_json::Value>(&meta_str)
+        {
+            meta["last_accessed"] = serde_json::Value::String(chrono::Utc::now().to_rfc3339());
+            let _ = std::fs::write(&meta_path, serde_json::to_string(&meta).unwrap_or_default());
         }
     }
 }
@@ -360,7 +355,10 @@ mod tests {
         .iter()
         .filter(|&&b| b)
         .count();
-        assert!(remaining < 3, "eviction should have removed at least one entry");
+        assert!(
+            remaining < 3,
+            "eviction should have removed at least one entry"
+        );
     }
 
     #[test]

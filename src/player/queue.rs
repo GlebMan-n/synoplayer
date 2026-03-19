@@ -80,6 +80,7 @@ impl PlayQueue {
     }
 
     /// Move to next track. Returns true if moved, false if at end.
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> bool {
         let Some(current) = self.current_index else {
             return false;
@@ -146,10 +147,10 @@ impl PlayQueue {
         }
 
         // Move current song to front
-        if let Some(idx) = self.current_index {
-            if idx != 0 {
-                self.songs.swap(0, idx);
-            }
+        if let Some(idx) = self.current_index
+            && idx != 0
+        {
+            self.songs.swap(0, idx);
         }
 
         // Simple Fisher-Yates shuffle for remaining elements

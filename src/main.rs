@@ -296,13 +296,18 @@ async fn main() -> anyhow::Result<()> {
         // --- Rate ---
         cli::Commands::Rate { song_id, rating } => {
             if !(0..=5).contains(&rating) {
-                eprintln!("Rating must be 0-5.");
+                eprintln!("Rating must be 0-5 (0 to clear).");
                 std::process::exit(1);
             }
             let client = connect(&config).await?;
             let api = SongApi::new(&client);
             api.set_rating(&song_id, rating).await?;
-            println!("Rating set to {rating} for {song_id}.");
+            if rating == 0 {
+                println!("Rating cleared for {song_id}.");
+            } else {
+                let stars = "*".repeat(rating as usize);
+                println!("Rating set to {stars} ({rating}/5) for {song_id}.");
+            }
         }
 
         // --- Favorites ---
@@ -322,14 +327,25 @@ async fn main() -> anyhow::Result<()> {
             let client = connect(&config).await?;
             let api = synoplayer::api::pin::PinApi::new(&client);
             let data = api.list().await?;
-            println!("Favorites ({}):", data.total);
-            for item in &data.items {
-                let display_name = if item.name.is_empty() {
-                    &item.title
-                } else {
-                    &item.name
-                };
-                println!("  [{}] {} ({})", item.id, display_name, item.item_type);
+            if data.items.is_empty() {
+                println!("No favorites yet. Use `synoplayer favorite <song_id>` to add.");
+            } else {
+                println!("Favorites ({}):", data.total);
+                for item in &data.items {
+                    let display_name = if item.name.is_empty() {
+                        &item.title
+                    } else {
+                        &item.name
+                    };
+                    let type_label = match item.item_type.as_str() {
+                        "song" => "Song",
+                        "album" => "Album",
+                        "artist" => "Artist",
+                        "playlist" => "Playlist",
+                        other => other,
+                    };
+                    println!("  [{type_label}] {display_name} ({})", item.id);
+                }
             }
         }
 
@@ -374,7 +390,9 @@ async fn main() -> anyhow::Result<()> {
                 let cache = CacheManager::new(config.cache.clone());
                 if let Some(days_str) = older {
                     let days: u32 = days_str.parse().map_err(|_| {
-                        anyhow::anyhow!("Invalid --older value '{days_str}': expected number of days")
+                        anyhow::anyhow!(
+                            "Invalid --older value '{days_str}': expected number of days"
+                        )
                     })?;
                     let removed = cache.clear_older_than_days(days)?;
                     println!("Removed {removed} entries older than {days} days.");
@@ -435,7 +453,10 @@ async fn main() -> anyhow::Result<()> {
                         match client.http().get(&url).send().await {
                             Ok(resp) => match resp.bytes().await {
                                 Ok(data) => {
-                                    let hash = synoplayer::cache::storage::CacheStorage::hash_content(&data);
+                                    let hash =
+                                        synoplayer::cache::storage::CacheStorage::hash_content(
+                                            &data,
+                                        );
                                     cache.put(&song.id, &data, &hash)?;
                                     cached += 1;
                                     println!("  + {}", song.title);
@@ -445,9 +466,7 @@ async fn main() -> anyhow::Result<()> {
                             Err(e) => eprintln!("  - {} (request error: {e})", song.title),
                         }
                     }
-                    println!(
-                        "Done. Cached: {cached}, already cached: {skipped}."
-                    );
+                    println!("Done. Cached: {cached}, already cached: {skipped}.");
                 }
             }
         },
@@ -501,7 +520,11 @@ async fn main() -> anyhow::Result<()> {
                     api.update_songs(&pl_id, &ids).await?;
                     println!("Removed {song_id} from '{playlist}'.");
                 }
-                cli::PlaylistAction::Play { name, from, shuffle } => {
+                cli::PlaylistAction::Play {
+                    name,
+                    from,
+                    shuffle,
+                } => {
                     let pl_id = resolve_playlist_id(&api, &name).await?;
                     let pl = get_playlist_detail(&api, &pl_id).await?;
                     let songs = pl.all_songs();
@@ -583,10 +606,7 @@ async fn main() -> anyhow::Result<()> {
                     } else {
                         let ids: Vec<&str> = matching.iter().map(|s| s.id.as_str()).collect();
                         api.create_with_songs(&name, "personal", &ids).await?;
-                        println!(
-                            "Smart playlist '{name}' created with {} songs.",
-                            ids.len()
-                        );
+                        println!("Smart playlist '{name}' created with {} songs.", ids.len());
                     }
                 }
             }

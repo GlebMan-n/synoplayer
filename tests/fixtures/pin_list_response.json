@@ -5,13 +5,17 @@
       {
         "id": "music_12345",
         "title": "Comfortably Numb",
+        "name": "",
         "type": "song"
       },
       {
         "id": "album_42",
         "title": "The Dark Side of the Moon",
+        "name": "My Fav Album",
         "type": "album"
       }
-    ]
+    ],
+    "total": 2,
+    "offset": 0
   }
 }

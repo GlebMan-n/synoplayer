@@ -78,7 +78,7 @@ impl SynoClient {
             .api_paths
             .get(api_name)
             .map(|info| info.path.as_str())
-            .or_else(|| {
+            .or({
                 // Fallback known paths
                 match api_name {
                     "SYNO.API.Info" => Some("query.cgi"),
