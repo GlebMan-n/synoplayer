@@ -21,6 +21,7 @@ impl<'a> FolderApi<'a> {
             ("limit", limit_str.as_str()),
             ("sort_by", "title"),
             ("sort_direction", "asc"),
+            ("additional", "song_tag,song_audio,song_rating"),
         ];
         if let Some(folder_id) = id {
             params.push(("id", folder_id));

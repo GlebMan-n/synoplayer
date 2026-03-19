@@ -170,6 +170,23 @@ pub struct Playlist {
     pub library: String,
     #[serde(default)]
     pub songs_count: Option<i64>,
+    #[serde(default)]
+    pub additional: Option<PlaylistAdditional>,
+}
+
+impl Playlist {
+    /// Get song count from `songs_count` (if API returns it) or `additional.songs_total`.
+    pub fn song_count(&self) -> i64 {
+        if let Some(count) = self.songs_count
+            && count > 0
+        {
+            return count;
+        }
+        self.additional
+            .as_ref()
+            .map(|a| a.songs_total)
+            .unwrap_or(0)
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -218,7 +235,7 @@ pub struct PlaylistDetail {
     pub additional: Option<PlaylistAdditional>,
 }
 
-#[derive(Debug, Default, Clone, Deserialize)]
+#[derive(Debug, Default, Clone, Deserialize, Serialize)]
 pub struct PlaylistAdditional {
     #[serde(default)]
     pub songs: Vec<Song>,
@@ -282,6 +299,22 @@ pub struct Folder {
     pub title: String,
     #[serde(default)]
     pub is_dir: bool,
+    #[serde(default)]
+    pub path: String,
+    #[serde(default)]
+    pub additional: Option<SongAdditional>,
+}
+
+impl Folder {
+    /// Convert a file folder item to a Song for playback.
+    pub fn to_song(&self) -> Song {
+        Song {
+            id: self.id.clone(),
+            title: self.title.clone(),
+            path: self.path.clone(),
+            additional: self.additional.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
