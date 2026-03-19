@@ -14,7 +14,6 @@ use ratatui::backend::CrosstermBackend;
 use crate::api::client::SynoClient;
 use crate::api::folder::FolderApi;
 use crate::api::playlist::PlaylistApi;
-use crate::api::song::SongApi;
 use crate::cache::manager::CacheManager;
 use crate::config::model::AppConfig;
 use crate::player::engine::AudioEngine;
@@ -104,11 +103,6 @@ pub async fn run(client: SynoClient, config: AppConfig) -> anyhow::Result<()> {
 }
 
 async fn load_data(client: &SynoClient, app: &mut App) -> anyhow::Result<()> {
-    // Load songs
-    let song_api = SongApi::new(client);
-    let data = song_api.list(0, 500).await?;
-    app.songs = StatefulList::with_items(data.songs);
-
     // Load playlists (both personal and shared)
     let playlist_api = PlaylistApi::new(client);
     let mut all_playlists = Vec::new();
@@ -124,8 +118,7 @@ async fn load_data(client: &SynoClient, app: &mut App) -> anyhow::Result<()> {
     app.folders = StatefulList::with_items(folder_data.items);
 
     app.status = format!(
-        "Loaded {} songs, {} playlists, {} folders",
-        app.songs.items.len(),
+        "Loaded {} playlists, {} folders",
         app.playlists.items.len(),
         app.folders.items.len()
     );

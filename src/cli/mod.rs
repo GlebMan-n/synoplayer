@@ -11,8 +11,12 @@ use clap::{Parser, Subcommand};
 #[command(about = "CLI audio player for Synology Audio Station")]
 #[command(version)]
 pub struct Cli {
+    /// Skip TUI and show help (by default synoplayer launches TUI)
+    #[arg(long)]
+    pub no_tui: bool,
+
     #[command(subcommand)]
-    pub command: Commands,
+    pub command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
@@ -135,6 +139,15 @@ pub enum Commands {
     },
     /// Launch interactive TUI player
     Tui,
+    /// Generate shell completion scripts
+    Completion {
+        /// Shell type
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+        /// Auto-install to standard location
+        #[arg(long)]
+        install: bool,
+    },
 }
 
 #[derive(Subcommand)]
