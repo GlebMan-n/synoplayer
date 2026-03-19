@@ -269,10 +269,10 @@ GET /webapi/AudioStation/stream.cgi/0.mp3?api=SYNO.AudioStation.Stream&version=2
 ### Этап 8: TUI (Text User Interface)
 **Цель**: Удобный интерфейс в терминале
 
-- [ ] ratatui-based TUI
-- [ ] Визуализация очереди
-- [ ] Навигация по библиотеке
-- [ ] Прогресс-бар воспроизведения
+- [x] ratatui-based TUI
+- [x] Визуализация очереди
+- [x] Навигация по библиотеке
+- [x] Прогресс-бар воспроизведения
 - [ ] Обложки в терминале (sixel/kitty protocol)
 
 ### Этап 9: Одноплатник и голос (будущее)

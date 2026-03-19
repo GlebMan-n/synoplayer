@@ -133,6 +133,8 @@ pub enum Commands {
         #[command(subcommand)]
         action: ConfigAction,
     },
+    /// Launch interactive TUI player
+    Tui,
 }
 
 #[derive(Subcommand)]

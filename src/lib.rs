@@ -5,4 +5,6 @@ pub mod config;
 pub mod credentials;
 pub mod error;
 pub mod history;
+pub mod playback;
 pub mod player;
+pub mod tui;
