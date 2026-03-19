@@ -306,6 +306,12 @@ pub struct Folder {
 }
 
 impl Folder {
+    /// Robust directory check: is_dir flag OR id starts with "dir_".
+    /// Synology API may omit is_dir when additional params are requested.
+    pub fn is_directory(&self) -> bool {
+        self.is_dir || self.id.starts_with("dir_")
+    }
+
     /// Convert a file folder item to a Song for playback.
     pub fn to_song(&self) -> Song {
         Song {

@@ -66,6 +66,16 @@ pub async fn handle_key(app: &mut App, key: KeyEvent, ctx: &TuiContext<'_>) {
         // --- Shuffle / Repeat ---
         KeyCode::Char('s') => {
             app.shuffle = !app.shuffle;
+            if app.shuffle && !app.queue.is_empty() {
+                // Reshuffle upcoming tracks in current queue
+                if let Some(ref np) = app.now_playing {
+                    let idx = np.queue_index;
+                    if idx + 1 < app.queue.len() {
+                        use rand::seq::SliceRandom;
+                        app.queue[idx + 1..].shuffle(&mut rand::thread_rng());
+                    }
+                }
+            }
             app.status = format!(
                 "Shuffle: {}",
                 if app.shuffle { "ON" } else { "off" }
@@ -153,7 +163,7 @@ async fn handle_folder_enter(app: &mut App, ctx: &TuiContext<'_>) -> anyhow::Res
         None => return Ok(()),
     };
 
-    if item.is_dir {
+    if item.is_directory() {
         app.folder_stack.push((item.id.clone(), item.title.clone()));
         load_folder(app, ctx).await?;
     } else {
@@ -162,7 +172,7 @@ async fn handle_folder_enter(app: &mut App, ctx: &TuiContext<'_>) -> anyhow::Res
             .folders
             .items
             .iter()
-            .filter(|f| !f.is_dir)
+            .filter(|f| !f.is_directory())
             .map(|f| f.to_song())
             .collect();
         let idx = songs.iter().position(|s| s.id == item.id).unwrap_or(0);

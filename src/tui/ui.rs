@@ -118,7 +118,7 @@ fn render_folders(f: &mut Frame, area: Rect, app: &mut App) {
         .unwrap_or("");
 
     let rows = app.folders.items.iter().map(|item| {
-        if item.is_dir {
+        if item.is_directory() {
             Row::new(vec![
                 Cell::from("[DIR]"),
                 Cell::from(item.title.clone()),
@@ -330,8 +330,8 @@ fn render_player(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_help(f: &mut Frame, area: Rect, app: &App) {
-    let shuffle_label = if app.shuffle { "ON" } else { "off" };
-    let repeat_label = match app.repeat_mode {
+    let shuffle_state = if app.shuffle { "ON" } else { "off" };
+    let repeat_state = match app.repeat_mode {
         RepeatMode::Off => "off",
         RepeatMode::One => "one",
         RepeatMode::All => "all",
@@ -347,9 +347,9 @@ fn render_help(f: &mut Frame, area: Rect, app: &App) {
         Span::styled("n/p", Style::default().fg(Color::Yellow)),
         Span::raw(":Next/Prev "),
         Span::styled("s", Style::default().fg(Color::Yellow)),
-        Span::raw(format!(":{shuffle_label} ")),
+        Span::raw(format!(":Shuffle({shuffle_state}) ")),
         Span::styled("r", Style::default().fg(Color::Yellow)),
-        Span::raw(format!(":{repeat_label} ")),
+        Span::raw(format!(":Repeat({repeat_state}) ")),
         Span::styled("Tab", Style::default().fg(Color::Yellow)),
         Span::raw(":Switch "),
         Span::styled("Esc", Style::default().fg(Color::Yellow)),
