@@ -30,7 +30,15 @@ pub async fn handle_key(app: &mut App, key: KeyEvent, ctx: &TuiContext<'_>) {
         }
         KeyCode::Tab => app.next_tab(),
         KeyCode::BackTab => app.prev_tab(),
-        KeyCode::Char(' ') => app.stop_playback(ctx.engine),
+
+        // --- Space: play/stop toggle ---
+        KeyCode::Char(' ') => {
+            if app.now_playing.is_some() {
+                app.stop_playback(ctx.engine);
+            } else if let Err(e) = handle_space_play(app, ctx).await {
+                app.status = format!("Error: {e}");
+            }
+        }
 
         // --- Navigation ---
         KeyCode::Down | KeyCode::Char('j') => app.active_list_next(),
@@ -66,14 +74,14 @@ pub async fn handle_key(app: &mut App, key: KeyEvent, ctx: &TuiContext<'_>) {
         // --- Shuffle / Repeat ---
         KeyCode::Char('s') => {
             app.shuffle = !app.shuffle;
-            if app.shuffle && !app.queue.is_empty() {
-                // Reshuffle upcoming tracks in current queue
-                if let Some(ref np) = app.now_playing {
-                    let idx = np.queue_index;
-                    if idx + 1 < app.queue.len() {
-                        use rand::seq::SliceRandom;
-                        app.queue[idx + 1..].shuffle(&mut rand::thread_rng());
-                    }
+            if app.shuffle
+                && !app.queue.is_empty()
+                && let Some(ref np) = app.now_playing
+            {
+                let idx = np.queue_index;
+                if idx + 1 < app.queue.len() {
+                    use rand::seq::SliceRandom;
+                    app.queue[idx + 1..].shuffle(&mut rand::thread_rng());
                 }
             }
             app.status = format!(
@@ -111,13 +119,15 @@ pub async fn handle_key(app: &mut App, key: KeyEvent, ctx: &TuiContext<'_>) {
     }
 }
 
+// --- Enter: navigate or play from current position ---
+
 async fn handle_enter(app: &mut App, ctx: &TuiContext<'_>) -> anyhow::Result<()> {
     match app.active_tab {
         Tab::Library => {
             if let Some(idx) = app.songs.selected() {
                 let mut queue: Vec<Song> = app.songs.items.clone();
                 let start = apply_shuffle(app.shuffle, &mut queue, idx);
-                play_from_queue(app, ctx, queue, start).await?;
+                play_and_show_queue(app, ctx, queue, start).await?;
             }
         }
         Tab::Folders => {
@@ -125,34 +135,22 @@ async fn handle_enter(app: &mut App, ctx: &TuiContext<'_>) -> anyhow::Result<()>
         }
         Tab::Playlists => {
             if app.playlist_detail.is_some() {
+                // Play from selected song in playlist detail
                 let (mut queue, idx) = {
                     let detail = app.playlist_detail.as_ref().unwrap();
                     let idx = detail.songs.selected().unwrap_or(0);
                     (detail.songs.items.clone(), idx)
                 };
                 let start = apply_shuffle(app.shuffle, &mut queue, idx);
-                play_from_queue(app, ctx, queue, start).await?;
+                play_and_show_queue(app, ctx, queue, start).await?;
             } else if let Some(pl) = app.playlists.selected_item() {
+                // Open playlist detail (don't play yet)
                 let id = pl.id.clone();
                 let name = pl.name.clone();
                 open_playlist(app, ctx, &id, &name).await?;
             }
         }
         Tab::Queue => {}
-    }
-    Ok(())
-}
-
-async fn handle_escape(app: &mut App, ctx: &TuiContext<'_>) -> anyhow::Result<()> {
-    match app.active_tab {
-        Tab::Playlists if app.playlist_detail.is_some() => {
-            app.playlist_detail = None;
-        }
-        Tab::Folders if !app.folder_stack.is_empty() => {
-            app.folder_stack.pop();
-            load_folder(app, ctx).await?;
-        }
-        _ => {}
     }
     Ok(())
 }
@@ -164,21 +162,124 @@ async fn handle_folder_enter(app: &mut App, ctx: &TuiContext<'_>) -> anyhow::Res
     };
 
     if item.is_directory() {
+        // Navigate into directory
         app.folder_stack.push((item.id.clone(), item.title.clone()));
         load_folder(app, ctx).await?;
     } else {
-        // Build queue from all files (non-dir) in current folder
-        let songs: Vec<Song> = app
-            .folders
+        // Play all files from current folder starting at selected
+        let songs = collect_folder_songs(app);
+        let idx = songs.iter().position(|s| s.id == item.id).unwrap_or(0);
+        let mut queue = songs;
+        let start = apply_shuffle(app.shuffle, &mut queue, idx);
+        play_and_show_queue(app, ctx, queue, start).await?;
+    }
+    Ok(())
+}
+
+// --- Space: play/stop toggle with special actions ---
+
+async fn handle_space_play(app: &mut App, ctx: &TuiContext<'_>) -> anyhow::Result<()> {
+    match app.active_tab {
+        Tab::Library => {
+            if let Some(idx) = app.songs.selected() {
+                let mut queue: Vec<Song> = app.songs.items.clone();
+                let start = apply_shuffle(app.shuffle, &mut queue, idx);
+                play_and_show_queue(app, ctx, queue, start).await?;
+            }
+        }
+        Tab::Folders => {
+            handle_folder_space(app, ctx).await?;
+        }
+        Tab::Playlists => {
+            handle_playlist_space(app, ctx).await?;
+        }
+        Tab::Queue => {}
+    }
+    Ok(())
+}
+
+/// Space on a folder item: play directory contents or file.
+async fn handle_folder_space(app: &mut App, ctx: &TuiContext<'_>) -> anyhow::Result<()> {
+    let item = match app.folders.selected_item() {
+        Some(f) => f.clone(),
+        None => return Ok(()),
+    };
+
+    if item.is_directory() {
+        // Load directory contents and play all audio files
+        app.status = format!("Loading '{}'...", item.title);
+        let api = FolderApi::new(ctx.client);
+        let data = api.list(Some(&item.id), 0, 500).await?;
+        let songs: Vec<Song> = data
             .items
             .iter()
             .filter(|f| !f.is_directory())
             .map(|f| f.to_song())
             .collect();
+        if songs.is_empty() {
+            app.status = format!("No audio files in '{}'", item.title);
+            return Ok(());
+        }
+        let mut queue = songs;
+        let start = apply_shuffle(app.shuffle, &mut queue, 0);
+        play_and_show_queue(app, ctx, queue, start).await?;
+    } else {
+        // Same as Enter on a file
+        let songs = collect_folder_songs(app);
         let idx = songs.iter().position(|s| s.id == item.id).unwrap_or(0);
         let mut queue = songs;
         let start = apply_shuffle(app.shuffle, &mut queue, idx);
-        play_from_queue(app, ctx, queue, start).await?;
+        play_and_show_queue(app, ctx, queue, start).await?;
+    }
+    Ok(())
+}
+
+/// Space on a playlist: load and play immediately.
+async fn handle_playlist_space(app: &mut App, ctx: &TuiContext<'_>) -> anyhow::Result<()> {
+    if app.playlist_detail.is_some() {
+        // Play from selected song in playlist detail
+        let (mut queue, idx) = {
+            let detail = app.playlist_detail.as_ref().unwrap();
+            let idx = detail.songs.selected().unwrap_or(0);
+            (detail.songs.items.clone(), idx)
+        };
+        let start = apply_shuffle(app.shuffle, &mut queue, idx);
+        play_and_show_queue(app, ctx, queue, start).await?;
+    } else if let Some(pl) = app.playlists.selected_item() {
+        // Load playlist and play from first track
+        let id = pl.id.clone();
+        let name = pl.name.clone();
+        app.status = format!("Loading playlist '{name}'...");
+        let api = PlaylistApi::new(ctx.client);
+        let data = api.get_info(&id).await?;
+        if let Some(detail) = data.into_playlist() {
+            let songs = detail.all_songs().to_vec();
+            if songs.is_empty() {
+                app.status = format!("Playlist '{name}' is empty.");
+                return Ok(());
+            }
+            let mut queue = songs;
+            let start = apply_shuffle(app.shuffle, &mut queue, 0);
+            play_and_show_queue(app, ctx, queue, start).await?;
+        } else {
+            app.status = format!("Failed to load playlist '{name}'.");
+        }
+    }
+    Ok(())
+}
+
+// --- Navigation helpers ---
+
+async fn handle_escape(app: &mut App, ctx: &TuiContext<'_>) -> anyhow::Result<()> {
+    match app.active_tab {
+        Tab::Playlists if app.playlist_detail.is_some() => {
+            app.playlist_detail = None;
+        }
+        Tab::Folders if !app.folder_stack.is_empty() => {
+            app.folder_stack.pop();
+            load_folder(app, ctx).await?;
+        }
+        _ => {}
     }
     Ok(())
 }
@@ -220,6 +321,18 @@ async fn open_playlist(
     Ok(())
 }
 
+// --- Playback helpers ---
+
+/// Collect all non-directory items from current folder view as Songs.
+fn collect_folder_songs(app: &App) -> Vec<Song> {
+    app.folders
+        .items
+        .iter()
+        .filter(|f| !f.is_directory())
+        .map(|f| f.to_song())
+        .collect()
+}
+
 /// Apply shuffle to queue if enabled. Returns the starting index.
 fn apply_shuffle(shuffle: bool, queue: &mut [Song], selected_idx: usize) -> usize {
     if !shuffle || queue.is_empty() {
@@ -237,7 +350,8 @@ fn apply_shuffle(shuffle: bool, queue: &mut [Song], selected_idx: usize) -> usiz
     0
 }
 
-async fn play_from_queue(
+/// Set queue, start playback, and switch to Queue tab.
+async fn play_and_show_queue(
     app: &mut App,
     ctx: &TuiContext<'_>,
     queue: Vec<Song>,
@@ -247,7 +361,9 @@ async fn play_from_queue(
         return Ok(());
     }
     app.queue = queue;
-    play_queue_index(app, ctx, index).await
+    play_queue_index(app, ctx, index).await?;
+    app.active_tab = Tab::Queue;
+    Ok(())
 }
 
 async fn play_queue_index(app: &mut App, ctx: &TuiContext<'_>, index: usize) -> anyhow::Result<()> {
