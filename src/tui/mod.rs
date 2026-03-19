@@ -12,6 +12,7 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
 use crate::api::client::SynoClient;
+use crate::api::folder::FolderApi;
 use crate::api::playlist::PlaylistApi;
 use crate::api::song::SongApi;
 use crate::cache::manager::CacheManager;
@@ -79,8 +80,12 @@ pub async fn run(client: SynoClient, config: AppConfig) -> anyhow::Result<()> {
         if last_tick.elapsed() >= tick_rate {
             if app.tick(&engine) {
                 // Track finished — advance queue
-                if let Err(e) = handler::advance_queue(&mut app, &ctx).await {
-                    app.status = format!("Error: {e}");
+                match handler::advance_queue(&mut app, &ctx).await {
+                    Ok(()) => {}
+                    Err(e) => {
+                        app.now_playing = None;
+                        app.status = format!("Error: {e}");
+                    }
                 }
             }
             last_tick = Instant::now();
@@ -113,10 +118,16 @@ async fn load_data(client: &SynoClient, app: &mut App) -> anyhow::Result<()> {
     }
     app.playlists = StatefulList::with_items(all_playlists);
 
+    // Load root folders
+    let folder_api = FolderApi::new(client);
+    let folder_data = folder_api.list(None, 0, 500).await?;
+    app.folders = StatefulList::with_items(folder_data.items);
+
     app.status = format!(
-        "Loaded {} songs, {} playlists",
+        "Loaded {} songs, {} playlists, {} folders",
         app.songs.items.len(),
-        app.playlists.items.len()
+        app.playlists.items.len(),
+        app.folders.items.len()
     );
     Ok(())
 }

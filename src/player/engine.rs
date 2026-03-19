@@ -93,13 +93,15 @@ impl AudioEngine {
             match child.try_wait() {
                 Ok(Some(_)) => {
                     *child_guard = None;
+                    // Reset engine state so subsequent calls don't report finished again
+                    self.state.lock().unwrap().stop();
+                    *self.play_start.lock().unwrap() = None;
                     true
                 }
                 _ => false,
             }
         } else {
-            // No subprocess = finished
-            self.state.lock().unwrap().is_playing()
+            false
         }
     }
 

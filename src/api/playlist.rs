@@ -23,6 +23,7 @@ impl<'a> PlaylistApi<'a> {
         let mut params = vec![
             ("offset", offset_str.as_str()),
             ("limit", limit_str.as_str()),
+            ("additional", "songs"),
         ];
         if let Some(lib) = library {
             params.push(("library", lib));
@@ -43,7 +44,11 @@ impl<'a> PlaylistApi<'a> {
                 "SYNO.AudioStation.Playlist",
                 3,
                 "getinfo",
-                &[("id", id), ("library", library), ("additional", "songs")],
+                &[
+                    ("id", id),
+                    ("library", library),
+                    ("additional", "songs,songs_song_tag,songs_song_audio,songs_song_rating"),
+                ],
             )
             .await
     }

@@ -308,10 +308,9 @@ async fn main() -> anyhow::Result<()> {
 
             println!("Playlists ({}):", all_playlists.len());
             for pl in &all_playlists {
-                let count = pl.songs_count.unwrap_or(0);
                 println!(
                     "  [{}] {} ({} songs, {})",
-                    pl.id, pl.name, count, pl.library
+                    pl.id, pl.name, pl.song_count(), pl.library
                 );
             }
         }

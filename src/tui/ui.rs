@@ -7,6 +7,8 @@ use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Gauge, Paragraph, Row, Table, Tabs};
 
+use crate::player::queue::RepeatMode;
+
 use super::app::{App, Tab};
 
 /// Render the full TUI frame.
@@ -24,7 +26,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
     render_tabs(f, chunks[0], app);
     render_content(f, chunks[1], app);
     render_player(f, chunks[2], app);
-    render_help(f, chunks[3]);
+    render_help(f, chunks[3], app);
 }
 
 fn render_tabs(f: &mut Frame, area: Rect, app: &App) {
@@ -40,6 +42,7 @@ fn render_tabs(f: &mut Frame, area: Rect, app: &App) {
 fn render_content(f: &mut Frame, area: Rect, app: &mut App) {
     match app.active_tab {
         Tab::Library => render_songs_table(f, area, app),
+        Tab::Folders => render_folders(f, area, app),
         Tab::Playlists => render_playlists(f, area, app),
         Tab::Queue => render_queue(f, area, app),
     }
@@ -103,6 +106,75 @@ fn render_songs_table(f: &mut Frame, area: Rect, app: &mut App) {
     f.render_stateful_widget(table, area, state);
 }
 
+fn render_folders(f: &mut Frame, area: Rect, app: &mut App) {
+    let header = Row::new(vec!["", "Name", "Artist", "Album", "Duration"])
+        .style(Style::default().fg(Color::DarkGray).bold())
+        .bottom_margin(1);
+
+    let playing_id = app
+        .now_playing
+        .as_ref()
+        .map(|np| np.track.id.as_str())
+        .unwrap_or("");
+
+    let rows = app.folders.items.iter().map(|item| {
+        if item.is_dir {
+            Row::new(vec![
+                Cell::from("[DIR]"),
+                Cell::from(item.title.clone()),
+                Cell::from(""),
+                Cell::from(""),
+                Cell::from(""),
+            ])
+            .style(Style::default().fg(Color::Yellow))
+        } else {
+            let song = item.to_song();
+            let (artist, title, album, dur) = extract_song_display(&song);
+            let is_playing = item.id == playing_id;
+            let style = if is_playing {
+                Style::default().fg(Color::Cyan)
+            } else {
+                Style::default()
+            };
+            let marker = if is_playing { " ▶" } else { "" };
+            Row::new(vec![
+                Cell::from(format!("  {marker}")),
+                Cell::from(title),
+                Cell::from(artist),
+                Cell::from(album),
+                Cell::from(dur),
+            ])
+            .style(style)
+        }
+    });
+
+    let widths = [
+        Constraint::Length(6),
+        Constraint::Percentage(30),
+        Constraint::Percentage(25),
+        Constraint::Percentage(25),
+        Constraint::Percentage(12),
+    ];
+
+    // Build title from breadcrumb stack
+    let title = if app.folder_stack.is_empty() {
+        let count = app.folders.items.len();
+        format!(" Folders ({count}) ")
+    } else {
+        let path: Vec<&str> = app.folder_stack.iter().map(|(_, name)| name.as_str()).collect();
+        let count = app.folders.items.len();
+        format!(" /{} ({count}) ", path.join("/"))
+    };
+
+    let table = Table::new(rows, widths)
+        .header(header)
+        .block(Block::default().borders(Borders::ALL).title(title))
+        .row_highlight_style(Style::default().bg(Color::DarkGray))
+        .highlight_symbol("► ");
+
+    f.render_stateful_widget(table, area, &mut app.folders.state);
+}
+
 fn render_playlists(f: &mut Frame, area: Rect, app: &mut App) {
     if app.playlist_detail.is_some() {
         render_songs_table(f, area, app);
@@ -116,7 +188,7 @@ fn render_playlists(f: &mut Frame, area: Rect, app: &mut App) {
     let rows = app.playlists.items.iter().map(|pl| {
         Row::new(vec![
             Cell::from(pl.name.clone()),
-            Cell::from(format!("{}", pl.songs_count.unwrap_or(0))),
+            Cell::from(format!("{}", pl.song_count())),
             Cell::from(pl.library.clone()),
         ])
     });
@@ -201,7 +273,15 @@ fn render_player(f: &mut Frame, area: Rect, app: &App) {
             let total = np.track.duration;
             let progress = np.progress();
 
-            // Line 1: track info + time
+            // Mode indicators
+            let shuffle_ind = if app.shuffle { " [S]" } else { "" };
+            let repeat_ind = match app.repeat_mode {
+                RepeatMode::Off => "",
+                RepeatMode::One => " [R:1]",
+                RepeatMode::All => " [R:*]",
+            };
+
+            // Line 1: track info + time + mode
             let elapsed_str = format_dur(elapsed);
             let total_str = format_dur(total);
             let info = Line::from(vec![
@@ -213,6 +293,10 @@ fn render_player(f: &mut Frame, area: Rect, app: &App) {
                 Span::raw("  "),
                 Span::styled(np.track.album.clone(), Style::default().fg(Color::DarkGray)),
                 Span::raw(format!("  {elapsed_str} / {total_str}")),
+                Span::styled(
+                    format!("{shuffle_ind}{repeat_ind}"),
+                    Style::default().fg(Color::Yellow),
+                ),
             ]);
             f.render_widget(Paragraph::new(info), inner);
 
@@ -226,16 +310,33 @@ fn render_player(f: &mut Frame, area: Rect, app: &App) {
             }
         }
         None => {
+            // Mode indicators even when stopped
+            let shuffle_ind = if app.shuffle { " [S]" } else { "" };
+            let repeat_ind = match app.repeat_mode {
+                RepeatMode::Off => "",
+                RepeatMode::One => " [R:1]",
+                RepeatMode::All => " [R:*]",
+            };
+            let mode_str = format!("{shuffle_ind}{repeat_ind}");
+
             let status = Line::from(vec![
                 Span::styled("■ ", Style::default().fg(Color::DarkGray)),
                 Span::raw(&app.status),
+                Span::styled(mode_str, Style::default().fg(Color::Yellow)),
             ]);
             f.render_widget(Paragraph::new(status), inner);
         }
     }
 }
 
-fn render_help(f: &mut Frame, area: Rect) {
+fn render_help(f: &mut Frame, area: Rect, app: &App) {
+    let shuffle_label = if app.shuffle { "ON" } else { "off" };
+    let repeat_label = match app.repeat_mode {
+        RepeatMode::Off => "off",
+        RepeatMode::One => "one",
+        RepeatMode::All => "all",
+    };
+
     let help = Line::from(vec![
         Span::styled(" ↑↓", Style::default().fg(Color::Yellow)),
         Span::raw(":Nav "),
@@ -245,6 +346,10 @@ fn render_help(f: &mut Frame, area: Rect) {
         Span::raw(":Stop "),
         Span::styled("n/p", Style::default().fg(Color::Yellow)),
         Span::raw(":Next/Prev "),
+        Span::styled("s", Style::default().fg(Color::Yellow)),
+        Span::raw(format!(":{shuffle_label} ")),
+        Span::styled("r", Style::default().fg(Color::Yellow)),
+        Span::raw(format!(":{repeat_label} ")),
         Span::styled("Tab", Style::default().fg(Color::Yellow)),
         Span::raw(":Switch "),
         Span::styled("Esc", Style::default().fg(Color::Yellow)),

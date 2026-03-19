@@ -2,23 +2,26 @@ use std::time::{Duration, Instant};
 
 use ratatui::widgets::TableState;
 
-use crate::api::types::{Playlist, Song};
+use crate::api::types::{Folder, Playlist, Song};
 use crate::player::engine::AudioEngine;
+use crate::player::queue::RepeatMode;
 use crate::player::state::TrackInfo;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
     Library,
+    Folders,
     Playlists,
     Queue,
 }
 
 impl Tab {
-    pub const ALL: &[Tab] = &[Tab::Library, Tab::Playlists, Tab::Queue];
+    pub const ALL: &[Tab] = &[Tab::Library, Tab::Folders, Tab::Playlists, Tab::Queue];
 
     pub fn label(&self) -> &'static str {
         match self {
             Tab::Library => "Library",
+            Tab::Folders => "Folders",
             Tab::Playlists => "Playlists",
             Tab::Queue => "Queue",
         }
@@ -142,11 +145,16 @@ pub struct App {
     pub songs: StatefulList<Song>,
     pub playlists: StatefulList<Playlist>,
     pub playlist_detail: Option<PlaylistDetail>,
+    pub folders: StatefulList<Folder>,
+    /// Breadcrumb stack for folder navigation: (id, name).
+    pub folder_stack: Vec<(String, String)>,
 
     // Playback
     pub queue: Vec<Song>,
     pub now_playing: Option<NowPlaying>,
     pub volume: u8,
+    pub shuffle: bool,
+    pub repeat_mode: RepeatMode,
 
     // Status bar
     pub status: String,
@@ -166,9 +174,13 @@ impl App {
             songs: StatefulList::default(),
             playlists: StatefulList::default(),
             playlist_detail: None,
+            folders: StatefulList::default(),
+            folder_stack: Vec::new(),
             queue: Vec::new(),
             now_playing: None,
             volume: 80,
+            shuffle: false,
+            repeat_mode: RepeatMode::Off,
             status: "Ready".to_string(),
         }
     }
@@ -190,9 +202,9 @@ impl App {
     }
 
     /// Returns true if a track just finished (caller should advance queue).
+    /// Note: does NOT clear now_playing — advance_queue needs queue_index from it.
     pub fn tick(&mut self, engine: &AudioEngine) -> bool {
         if self.now_playing.is_some() && engine.check_finished() {
-            self.now_playing = None;
             return true;
         }
         false
@@ -217,6 +229,7 @@ impl App {
     pub fn active_list_next(&mut self) {
         match self.active_tab {
             Tab::Library => self.songs.next(),
+            Tab::Folders => self.folders.next(),
             Tab::Playlists => {
                 if let Some(ref mut detail) = self.playlist_detail {
                     detail.songs.next();
@@ -231,6 +244,7 @@ impl App {
     pub fn active_list_previous(&mut self) {
         match self.active_tab {
             Tab::Library => self.songs.previous(),
+            Tab::Folders => self.folders.previous(),
             Tab::Playlists => {
                 if let Some(ref mut detail) = self.playlist_detail {
                     detail.songs.previous();
@@ -245,6 +259,7 @@ impl App {
     pub fn active_list_page_down(&mut self, page: usize) {
         match self.active_tab {
             Tab::Library => self.songs.page_down(page),
+            Tab::Folders => self.folders.page_down(page),
             Tab::Playlists => {
                 if let Some(ref mut d) = self.playlist_detail {
                     d.songs.page_down(page);
@@ -259,6 +274,7 @@ impl App {
     pub fn active_list_page_up(&mut self, page: usize) {
         match self.active_tab {
             Tab::Library => self.songs.page_up(page),
+            Tab::Folders => self.folders.page_up(page),
             Tab::Playlists => {
                 if let Some(ref mut d) = self.playlist_detail {
                     d.songs.page_up(page);
@@ -331,6 +347,8 @@ mod tests {
     fn tab_switching() {
         let mut app = App::new();
         assert_eq!(app.active_tab, Tab::Library);
+        app.next_tab();
+        assert_eq!(app.active_tab, Tab::Folders);
         app.next_tab();
         assert_eq!(app.active_tab, Tab::Playlists);
         app.next_tab();
