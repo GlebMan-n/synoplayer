@@ -11,6 +11,7 @@ use synoplayer::cache::storage::CacheStorage;
 use synoplayer::cli;
 use synoplayer::config::model::AppConfig;
 use synoplayer::credentials::store::CredentialStore;
+use synoplayer::history::{HistoryEntry, PlayHistory};
 use synoplayer::player::engine::AudioEngine;
 use synoplayer::player::state::TrackInfo;
 
@@ -159,6 +160,7 @@ async fn main() -> anyhow::Result<()> {
         // --- Play ---
         cli::Commands::Play { target } => {
             let cache = CacheManager::new(config.cache.clone());
+            let history = PlayHistory::new();
 
             match connect(&config).await {
                 Ok(client) => {
@@ -175,6 +177,7 @@ async fn main() -> anyhow::Result<()> {
                         format_duration(track.duration)
                     );
 
+                    record_history(&history, &track);
                     let engine = AudioEngine::new();
                     engine.play_url(&source, track)?;
                     wait_for_playback(&engine).await;
@@ -189,6 +192,7 @@ async fn main() -> anyhow::Result<()> {
                             "[offline] Playing from cache: {} - {}",
                             track.artist, track.title
                         );
+                        record_history(&history, &track);
                         let engine = AudioEngine::new();
                         engine.play_url(source.to_str().unwrap_or(""), track)?;
                         wait_for_playback(&engine).await;
@@ -542,7 +546,13 @@ async fn main() -> anyhow::Result<()> {
                     name,
                     from,
                     shuffle,
+                    repeat,
                 } => {
+                    let repeat_mode = match repeat.to_lowercase().as_str() {
+                        "one" => synoplayer::player::queue::RepeatMode::One,
+                        "all" => synoplayer::player::queue::RepeatMode::All,
+                        _ => synoplayer::player::queue::RepeatMode::Off,
+                    };
                     let pl_id = resolve_playlist_id(&api, &name).await?;
                     let pl = get_playlist_detail(&api, &pl_id).await?;
                     let songs = pl.all_songs();
@@ -559,21 +569,30 @@ async fn main() -> anyhow::Result<()> {
                         } else {
                             (from.saturating_sub(1)).min(queue.len() - 1)
                         };
+                        let repeat_label = match repeat_mode {
+                            synoplayer::player::queue::RepeatMode::One => ", repeat: one",
+                            synoplayer::player::queue::RepeatMode::All => ", repeat: all",
+                            synoplayer::player::queue::RepeatMode::Off => "",
+                        };
                         println!(
-                            "Playing playlist '{name}' ({} songs{}{})",
+                            "Playing playlist '{name}' ({} songs{}{}{})",
                             queue.len(),
                             if shuffle { ", shuffled" } else { "" },
                             if !shuffle && start > 0 {
                                 format!(", starting from #{}", start + 1)
                             } else {
                                 String::new()
-                            }
+                            },
+                            repeat_label,
                         );
                         let stream_api = StreamApi::new(&client);
                         let cache = CacheManager::new(config.cache.clone());
                         let engine = AudioEngine::new();
+                        let history = PlayHistory::new();
 
-                        for (i, song) in queue[start..].iter().enumerate() {
+                        let mut idx = start;
+                        loop {
+                            let song = &queue[idx];
                             let track = track_from_song(song);
                             let source = resolve_audio_source(&client, song, &cache, &config.cache)
                                 .await
@@ -582,14 +601,31 @@ async fn main() -> anyhow::Result<()> {
                                 });
                             println!(
                                 "[{}/{}] {} - {} [{}]",
-                                start + i + 1,
+                                idx + 1,
                                 queue.len(),
                                 track.artist,
                                 track.title,
                                 format_duration(track.duration)
                             );
+                            record_history(&history, &track);
                             engine.play_url(&source, track)?;
                             wait_for_playback(&engine).await;
+
+                            // Advance based on repeat mode
+                            match repeat_mode {
+                                synoplayer::player::queue::RepeatMode::One => {
+                                    // Stay on same track, loop forever
+                                }
+                                synoplayer::player::queue::RepeatMode::All => {
+                                    idx = (idx + 1) % queue.len();
+                                }
+                                synoplayer::player::queue::RepeatMode::Off => {
+                                    idx += 1;
+                                    if idx >= queue.len() {
+                                        break;
+                                    }
+                                }
+                            }
                         }
                         println!("Playlist finished.");
                     }
@@ -681,6 +717,64 @@ async fn main() -> anyhow::Result<()> {
                 println!("Radio station '{name}' added.");
             }
         },
+
+        // --- Download ---
+        cli::Commands::Download { song_id, output } => {
+            let client = connect(&config).await?;
+            let song = find_song(&client, &song_id).await?;
+            let track = track_from_song(&song);
+            let stream_api = StreamApi::new(&client);
+
+            println!("Downloading: {} - {} ...", track.artist, track.title);
+            let bytes = stream_api.stream_bytes(&song.id).await?;
+
+            let out_path = if let Some(ref p) = output {
+                std::path::PathBuf::from(p)
+            } else {
+                let filename = format!(
+                    "{} - {}.mp3",
+                    if track.artist.is_empty() {
+                        "Unknown"
+                    } else {
+                        &track.artist
+                    },
+                    track.title
+                );
+                std::path::PathBuf::from(&filename)
+            };
+
+            std::fs::write(&out_path, &bytes)?;
+            println!(
+                "Saved to {} ({:.1} MB)",
+                out_path.display(),
+                bytes.len() as f64 / 1_048_576.0
+            );
+        }
+
+        // --- History ---
+        cli::Commands::History { action } => {
+            let history = PlayHistory::new();
+            match action {
+                Some(cli::HistoryAction::Clear) => {
+                    history.clear()?;
+                    println!("Playback history cleared.");
+                }
+                None => {
+                    let entries = history.list(50);
+                    if entries.is_empty() {
+                        println!("No playback history.");
+                    } else {
+                        println!("Recent history ({} entries):", entries.len());
+                        for entry in &entries {
+                            println!(
+                                "  {} - {} [{}] ({})",
+                                entry.artist, entry.title, entry.album, entry.played_at
+                            );
+                        }
+                    }
+                }
+            }
+        }
 
         // --- Shuffle / Repeat ---
         cli::Commands::Shuffle { mode } => {
@@ -1121,6 +1215,20 @@ fn check_smart_filter(
         }
     }
     true
+}
+
+/// Record a track in playback history.
+fn record_history(history: &PlayHistory, track: &TrackInfo) {
+    let entry = HistoryEntry {
+        song_id: track.id.clone(),
+        title: track.title.clone(),
+        artist: track.artist.clone(),
+        album: track.album.clone(),
+        played_at: chrono::Utc::now().to_rfc3339(),
+    };
+    if let Err(e) = history.add(entry) {
+        tracing::warn!("Failed to record history: {e}");
+    }
 }
 
 /// Parse a local .m3u file, returning non-comment, non-empty lines.

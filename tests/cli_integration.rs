@@ -116,3 +116,57 @@ fn cli_favorites_help() {
         .success()
         .stdout(predicate::str::contains("List favorites"));
 }
+
+// --- Stage 7: Download, History, Repeat ---
+
+#[test]
+fn cli_download_requires_song_id() {
+    Command::cargo_bin("synoplayer")
+        .unwrap()
+        .arg("download")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Usage"));
+}
+
+#[test]
+fn cli_download_help() {
+    Command::cargo_bin("synoplayer")
+        .unwrap()
+        .arg("download")
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Download a track"));
+}
+
+#[test]
+fn cli_history_help() {
+    Command::cargo_bin("synoplayer")
+        .unwrap()
+        .arg("history")
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("playback history"));
+}
+
+#[test]
+fn cli_history_no_args_works() {
+    Command::cargo_bin("synoplayer")
+        .unwrap()
+        .arg("history")
+        .assert()
+        .success();
+}
+
+#[test]
+fn cli_playlist_play_help_shows_repeat() {
+    Command::cargo_bin("synoplayer")
+        .unwrap()
+        .args(["playlist", "play", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--repeat"))
+        .stdout(predicate::str::contains("--shuffle"));
+}
