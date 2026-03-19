@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct AppConfig {
     #[serde(default = "ServerConfig::default")]
     pub server: ServerConfig,
@@ -68,7 +68,7 @@ pub struct CacheConfig {
     pub verify_integrity: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct DisplayConfig {
     #[serde(default)]
     pub show_lyrics: bool,
@@ -106,18 +106,6 @@ fn default_max_size() -> u64 {
 }
 fn default_ttl() -> u32 {
     30
-}
-
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self {
-            server: ServerConfig::default(),
-            auth: AuthConfig::default(),
-            player: PlayerConfig::default(),
-            cache: CacheConfig::default(),
-            display: DisplayConfig::default(),
-        }
-    }
 }
 
 impl Default for ServerConfig {
@@ -162,15 +150,6 @@ impl Default for CacheConfig {
             preload_playlist: false,
             transcode_before_cache: false,
             verify_integrity: true,
-        }
-    }
-}
-
-impl Default for DisplayConfig {
-    fn default() -> Self {
-        Self {
-            show_lyrics: false,
-            show_cover: false,
         }
     }
 }

@@ -62,3 +62,57 @@ fn cli_cache_status_works() {
         .assert()
         .success();
 }
+
+// --- Stage 5: Ratings & Favorites ---
+
+#[test]
+fn cli_rate_requires_args() {
+    Command::cargo_bin("synoplayer")
+        .unwrap()
+        .arg("rate")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Usage"));
+}
+
+#[test]
+fn cli_rate_help() {
+    Command::cargo_bin("synoplayer")
+        .unwrap()
+        .arg("rate")
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Rate a song"));
+}
+
+#[test]
+fn cli_favorite_requires_song_id() {
+    Command::cargo_bin("synoplayer")
+        .unwrap()
+        .arg("favorite")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Usage"));
+}
+
+#[test]
+fn cli_unfavorite_requires_song_id() {
+    Command::cargo_bin("synoplayer")
+        .unwrap()
+        .arg("unfavorite")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Usage"));
+}
+
+#[test]
+fn cli_favorites_help() {
+    Command::cargo_bin("synoplayer")
+        .unwrap()
+        .arg("favorites")
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("List favorites"));
+}

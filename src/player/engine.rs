@@ -114,10 +114,10 @@ impl AudioEngine {
 
     /// Get estimated current position.
     pub fn current_position(&self) -> Duration {
-        if let Some(start) = *self.play_start.lock().unwrap() {
-            if self.state.lock().unwrap().is_playing() {
-                return start.elapsed();
-            }
+        if let Some(start) = *self.play_start.lock().unwrap()
+            && self.state.lock().unwrap().is_playing()
+        {
+            return start.elapsed();
         }
         self.state
             .lock()

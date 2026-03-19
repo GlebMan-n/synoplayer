@@ -163,9 +163,45 @@ fn parse_pin_list_response() {
 
     assert!(response.success);
     let data = response.data.unwrap();
+    assert_eq!(data.total, 2);
     assert_eq!(data.items.len(), 2);
+
+    // First pin: song with empty name (not renamed)
+    assert_eq!(data.items[0].id, "music_12345");
+    assert_eq!(data.items[0].title, "Comfortably Numb");
+    assert_eq!(data.items[0].name, "");
     assert_eq!(data.items[0].item_type, "song");
+
+    // Second pin: album with custom name (renamed)
+    assert_eq!(data.items[1].id, "album_42");
+    assert_eq!(data.items[1].title, "The Dark Side of the Moon");
+    assert_eq!(data.items[1].name, "My Fav Album");
     assert_eq!(data.items[1].item_type, "album");
+}
+
+#[test]
+fn pin_item_display_name_prefers_name_over_title() {
+    let json = include_str!("fixtures/pin_list_response.json");
+    let response: ApiResponse<PinListData> = serde_json::from_str(json).unwrap();
+    let data = response.data.unwrap();
+
+    // When name is empty, title should be used
+    let item0 = &data.items[0];
+    let display0 = if item0.name.is_empty() {
+        &item0.title
+    } else {
+        &item0.name
+    };
+    assert_eq!(display0, "Comfortably Numb");
+
+    // When name is set (renamed), name should be used
+    let item1 = &data.items[1];
+    let display1 = if item1.name.is_empty() {
+        &item1.title
+    } else {
+        &item1.name
+    };
+    assert_eq!(display1, "My Fav Album");
 }
 
 #[test]
