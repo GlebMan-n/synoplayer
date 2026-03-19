@@ -6,7 +6,8 @@ use synoplayer::api::client::SynoClient;
 use synoplayer::api::radio::RadioApi;
 use synoplayer::api::song::SongApi;
 use synoplayer::api::stream::StreamApi;
-use synoplayer::cache::manager::CacheManager;
+use synoplayer::cache::manager::{CacheManager, SongMeta};
+use synoplayer::cache::storage::CacheStorage;
 use synoplayer::cli;
 use synoplayer::config::model::AppConfig;
 use synoplayer::credentials::store::CredentialStore;
@@ -21,6 +22,14 @@ async fn main() -> anyhow::Result<()> {
 
     let cli = cli::Cli::parse();
     let config = AppConfig::load()?;
+
+    // Run TTL cleanup on startup if cache is enabled
+    if config.cache.enabled {
+        let cache = CacheManager::new(config.cache.clone());
+        if let Err(e) = cache.cleanup_expired() {
+            tracing::warn!("Cache TTL cleanup failed: {e}");
+        }
+    }
 
     match cli.command {
         // --- Config ---
@@ -149,43 +158,49 @@ async fn main() -> anyhow::Result<()> {
 
         // --- Play ---
         cli::Commands::Play { target } => {
-            let client = connect(&config).await?;
+            let cache = CacheManager::new(config.cache.clone());
 
-            // Try target as song ID first, then search by name
-            let song = if target.starts_with("music_") {
-                let api = SongApi::new(&client);
-                api.get_info(&target).await?
-            } else {
-                let api = SongApi::new(&client);
-                let data = api.search(&target, 0, 1).await?;
-                data.songs.into_iter().next().ok_or_else(|| {
-                    synoplayer::error::SynoError::Player(format!("No song found: {target}"))
-                })?
-            };
+            match connect(&config).await {
+                Ok(client) => {
+                    // Online mode
+                    let song = find_song(&client, &target).await?;
+                    let track = track_from_song(&song);
+                    let source =
+                        resolve_audio_source(&client, &song, &cache, &config.cache).await?;
 
-            let stream_api = StreamApi::new(&client);
-            let url = stream_api.stream_url(&song.id)?;
+                    println!("Playing: {} - {}", track.artist, track.title);
+                    println!(
+                        "Album: {} | Duration: {}",
+                        track.album,
+                        format_duration(track.duration)
+                    );
 
-            let track = track_from_song(&song);
-            let engine = AudioEngine::new();
-
-            println!("Playing: {} - {}", track.artist, track.title);
-            println!(
-                "Album: {} | Duration: {}",
-                track.album,
-                format_duration(track.duration)
-            );
-
-            engine.play_url(&url, track)?;
-
-            // Wait for playback to finish
-            loop {
-                if engine.check_finished() {
-                    break;
+                    let engine = AudioEngine::new();
+                    engine.play_url(&source, track)?;
+                    wait_for_playback(&engine).await;
+                    println!("Playback finished.");
                 }
-                tokio::time::sleep(Duration::from_millis(500)).await;
+                Err(_) => {
+                    // Offline mode — try cache
+                    if target.starts_with("music_") && cache.contains(&target) {
+                        let source = cache.file_path(&target);
+                        let track = track_from_cache(&cache, &target);
+                        println!(
+                            "[offline] Playing from cache: {} - {}",
+                            track.artist, track.title
+                        );
+                        let engine = AudioEngine::new();
+                        engine.play_url(source.to_str().unwrap_or(""), track)?;
+                        wait_for_playback(&engine).await;
+                        println!("Playback finished.");
+                    } else {
+                        anyhow::bail!(
+                            "Server unreachable and no cached version for '{target}'.\n\
+                             Run `synoplayer login` or check server connectivity."
+                        );
+                    }
+                }
             }
-            println!("Playback finished.");
         }
 
         // --- Now ---
@@ -409,12 +424,17 @@ async fn main() -> anyhow::Result<()> {
                 } else {
                     println!("Cached tracks ({}):", entries.len());
                     for entry in &entries {
+                        let label = if !entry.artist.is_empty() && !entry.title.is_empty() {
+                            format!("{} - {}", entry.artist, entry.title)
+                        } else {
+                            entry.song_id.clone()
+                        };
                         println!(
-                            "  [{}] cached: {} | size: {:.1} KB | accessed: {}",
+                            "  [{}] {} | {:.1} KB | cached: {}",
                             entry.song_id,
-                            entry.cached_at.format("%Y-%m-%d %H:%M"),
+                            label,
                             entry.size_bytes as f64 / 1024.0,
-                            entry.last_accessed.format("%Y-%m-%d %H:%M"),
+                            entry.cached_at.format("%Y-%m-%d %H:%M"),
                         );
                     }
                 }
@@ -453,11 +473,9 @@ async fn main() -> anyhow::Result<()> {
                         match client.http().get(&url).send().await {
                             Ok(resp) => match resp.bytes().await {
                                 Ok(data) => {
-                                    let hash =
-                                        synoplayer::cache::storage::CacheStorage::hash_content(
-                                            &data,
-                                        );
-                                    cache.put(&song.id, &data, &hash)?;
+                                    let hash = CacheStorage::hash_content(&data);
+                                    let meta = song_meta_from_song(song);
+                                    cache.put_with_meta(&song.id, &data, &hash, &meta)?;
                                     cached += 1;
                                     println!("  + {}", song.title);
                                 }
@@ -552,11 +570,16 @@ async fn main() -> anyhow::Result<()> {
                             }
                         );
                         let stream_api = StreamApi::new(&client);
+                        let cache = CacheManager::new(config.cache.clone());
                         let engine = AudioEngine::new();
 
                         for (i, song) in queue[start..].iter().enumerate() {
                             let track = track_from_song(song);
-                            let url = stream_api.stream_url(&song.id)?;
+                            let source = resolve_audio_source(&client, song, &cache, &config.cache)
+                                .await
+                                .unwrap_or_else(|_| {
+                                    stream_api.stream_url(&song.id).unwrap_or_default()
+                                });
                             println!(
                                 "[{}/{}] {} - {} [{}]",
                                 start + i + 1,
@@ -565,13 +588,8 @@ async fn main() -> anyhow::Result<()> {
                                 track.title,
                                 format_duration(track.duration)
                             );
-                            engine.play_url(&url, track)?;
-                            loop {
-                                if engine.check_finished() {
-                                    break;
-                                }
-                                tokio::time::sleep(Duration::from_millis(500)).await;
-                            }
+                            engine.play_url(&source, track)?;
+                            wait_for_playback(&engine).await;
                         }
                         println!("Playlist finished.");
                     }
@@ -706,6 +724,123 @@ async fn connect(config: &AppConfig) -> anyhow::Result<SynoClient> {
     }
 
     anyhow::bail!("Not authenticated. Run `synoplayer login` first.")
+}
+
+/// Find a song by ID or search by name.
+async fn find_song(
+    client: &SynoClient,
+    target: &str,
+) -> anyhow::Result<synoplayer::api::types::Song> {
+    let api = SongApi::new(client);
+    if target.starts_with("music_") {
+        Ok(api.get_info(target).await?)
+    } else {
+        let data = api.search(target, 0, 1).await?;
+        data.songs.into_iter().next().ok_or_else(|| {
+            synoplayer::error::SynoError::Player(format!("No song found: {target}")).into()
+        })
+    }
+}
+
+/// Resolve the audio source for playback: cache file or stream URL.
+///
+/// Flow: cache hit → play from disk; miss + cache_on_play → download, cache, play from disk;
+/// miss + !cache_on_play → stream URL.
+async fn resolve_audio_source(
+    client: &SynoClient,
+    song: &synoplayer::api::types::Song,
+    cache: &CacheManager,
+    cache_config: &synoplayer::config::model::CacheConfig,
+) -> anyhow::Result<String> {
+    // Cache hit — play from local file
+    if cache.contains(&song.id) {
+        let path = cache.file_path(&song.id);
+        cache.get(&song.id)?; // touch last_accessed
+        tracing::debug!("Cache HIT for {}", song.id);
+        return Ok(path.to_string_lossy().to_string());
+    }
+
+    let stream_api = StreamApi::new(client);
+    let url = stream_api.stream_url(&song.id)?;
+
+    // Cache miss + cache_on_play — download, cache, return local path
+    if cache_config.enabled && cache_config.cache_on_play {
+        tracing::debug!("Cache MISS for {} — downloading for cache", song.id);
+        match client.http().get(&url).send().await {
+            Ok(resp) => match resp.bytes().await {
+                Ok(data) => {
+                    let hash = CacheStorage::hash_content(&data);
+                    let meta = song_meta_from_song(song);
+                    cache.put_with_meta(&song.id, &data, &hash, &meta)?;
+                    let path = cache.file_path(&song.id);
+                    return Ok(path.to_string_lossy().to_string());
+                }
+                Err(e) => tracing::warn!("Download failed for cache: {e}, falling back to stream"),
+            },
+            Err(e) => tracing::warn!("Request failed for cache: {e}, falling back to stream"),
+        }
+    }
+
+    // No caching or cache failed — stream directly
+    Ok(url)
+}
+
+/// Build a TrackInfo from cache metadata (for offline playback).
+fn track_from_cache(cache: &CacheManager, song_id: &str) -> TrackInfo {
+    if let Some(entry) = cache.get_entry_meta(song_id) {
+        TrackInfo {
+            id: song_id.to_string(),
+            title: if entry.title.is_empty() {
+                song_id.to_string()
+            } else {
+                entry.title
+            },
+            artist: if entry.artist.is_empty() {
+                "Unknown".to_string()
+            } else {
+                entry.artist
+            },
+            album: entry.album,
+            duration: Duration::ZERO,
+        }
+    } else {
+        TrackInfo {
+            id: song_id.to_string(),
+            title: song_id.to_string(),
+            artist: "Unknown".to_string(),
+            album: String::new(),
+            duration: Duration::ZERO,
+        }
+    }
+}
+
+/// Extract SongMeta from a Song for caching.
+fn song_meta_from_song(song: &synoplayer::api::types::Song) -> SongMeta {
+    if let Some(ref add) = song.additional {
+        let tag = add.song_tag.as_ref();
+        SongMeta {
+            title: tag
+                .map(|t| t.title.clone())
+                .unwrap_or_else(|| song.title.clone()),
+            artist: tag.map(|t| t.artist.clone()).unwrap_or_default(),
+            album: tag.map(|t| t.album.clone()).unwrap_or_default(),
+        }
+    } else {
+        SongMeta {
+            title: song.title.clone(),
+            ..Default::default()
+        }
+    }
+}
+
+/// Wait for playback subprocess to finish.
+async fn wait_for_playback(engine: &AudioEngine) {
+    loop {
+        if engine.check_finished() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
 }
 
 fn track_from_song(song: &synoplayer::api::types::Song) -> TrackInfo {

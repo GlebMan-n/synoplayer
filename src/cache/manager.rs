@@ -13,6 +13,14 @@ pub struct CacheStatus {
     pub path: PathBuf,
 }
 
+/// Song metadata stored alongside cached audio.
+#[derive(Debug, Clone, Default)]
+pub struct SongMeta {
+    pub title: String,
+    pub artist: String,
+    pub album: String,
+}
+
 /// Metadata for a single cached entry.
 #[derive(Debug, Clone)]
 pub struct CacheEntry {
@@ -20,6 +28,9 @@ pub struct CacheEntry {
     pub cached_at: chrono::DateTime<chrono::Utc>,
     pub last_accessed: chrono::DateTime<chrono::Utc>,
     pub size_bytes: u64,
+    pub title: String,
+    pub artist: String,
+    pub album: String,
 }
 
 /// Manages audio file caching with LRU eviction and TTL.
@@ -43,6 +54,27 @@ impl CacheManager {
 
     /// Store audio data in cache. Triggers LRU eviction if needed.
     pub fn put(&self, song_id: &str, data: &[u8], content_hash: &str) -> crate::error::Result<()> {
+        self.put_inner(song_id, data, content_hash, None)
+    }
+
+    /// Store audio data with song metadata for offline display.
+    pub fn put_with_meta(
+        &self,
+        song_id: &str,
+        data: &[u8],
+        content_hash: &str,
+        meta: &SongMeta,
+    ) -> crate::error::Result<()> {
+        self.put_inner(song_id, data, content_hash, Some(meta))
+    }
+
+    fn put_inner(
+        &self,
+        song_id: &str,
+        data: &[u8],
+        content_hash: &str,
+        song_meta: Option<&SongMeta>,
+    ) -> crate::error::Result<()> {
         if !self.config.enabled {
             return Ok(());
         }
@@ -53,13 +85,18 @@ impl CacheManager {
             .map_err(|e| crate::error::SynoError::Cache(e.to_string()))?;
 
         // Write meta
-        let meta = serde_json::json!({
+        let mut meta = serde_json::json!({
             "song_id": song_id,
             "sha256": content_hash,
             "cached_at": chrono::Utc::now().to_rfc3339(),
             "last_accessed": chrono::Utc::now().to_rfc3339(),
             "size_bytes": data.len(),
         });
+        if let Some(sm) = song_meta {
+            meta["title"] = serde_json::Value::String(sm.title.clone());
+            meta["artist"] = serde_json::Value::String(sm.artist.clone());
+            meta["album"] = serde_json::Value::String(sm.album.clone());
+        }
         let meta_path = self.storage.meta_path(song_id);
         std::fs::write(meta_path, serde_json::to_string(&meta).unwrap_or_default())
             .map_err(|e| crate::error::SynoError::Cache(e.to_string()))?;
@@ -174,17 +211,46 @@ impl CacheManager {
                     .and_then(|s| s.parse::<chrono::DateTime<chrono::Utc>>().ok())
                     .unwrap_or(cached_at);
                 let size_bytes = meta["size_bytes"].as_u64().unwrap_or(0);
+                let title = meta["title"].as_str().unwrap_or("").to_string();
+                let artist = meta["artist"].as_str().unwrap_or("").to_string();
+                let album = meta["album"].as_str().unwrap_or("").to_string();
                 if !song_id.is_empty() {
                     entries.push(CacheEntry {
                         song_id,
                         cached_at,
                         last_accessed,
                         size_bytes,
+                        title,
+                        artist,
+                        album,
                     });
                 }
             }
         }
         Ok(entries)
+    }
+
+    /// Get metadata for a single cached entry (for offline display).
+    pub fn get_entry_meta(&self, song_id: &str) -> Option<CacheEntry> {
+        let meta_path = self.storage.meta_path(song_id);
+        let meta_str = std::fs::read_to_string(meta_path).ok()?;
+        let meta: serde_json::Value = serde_json::from_str(&meta_str).ok()?;
+        let cached_at = meta["cached_at"]
+            .as_str()
+            .and_then(|s| s.parse::<chrono::DateTime<chrono::Utc>>().ok())
+            .unwrap_or_default();
+        Some(CacheEntry {
+            song_id: song_id.to_string(),
+            cached_at,
+            last_accessed: meta["last_accessed"]
+                .as_str()
+                .and_then(|s| s.parse::<chrono::DateTime<chrono::Utc>>().ok())
+                .unwrap_or(cached_at),
+            size_bytes: meta["size_bytes"].as_u64().unwrap_or(0),
+            title: meta["title"].as_str().unwrap_or("").to_string(),
+            artist: meta["artist"].as_str().unwrap_or("").to_string(),
+            album: meta["album"].as_str().unwrap_or("").to_string(),
+        })
     }
 
     /// Remove entries cached more than `days` days ago. Returns count removed.
@@ -375,6 +441,105 @@ mod tests {
         let ids: Vec<&str> = entries.iter().map(|e| e.song_id.as_str()).collect();
         assert!(ids.contains(&"song_a"));
         assert!(ids.contains(&"song_b"));
+    }
+
+    #[test]
+    fn put_with_meta_stores_song_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = CacheManager::new(test_config(dir.path()));
+        let data = b"audio data";
+        let hash = CacheStorage::hash_content(data);
+        let meta = SongMeta {
+            title: "Comfortably Numb".to_string(),
+            artist: "Pink Floyd".to_string(),
+            album: "The Wall".to_string(),
+        };
+        cache.put_with_meta("song_1", data, &hash, &meta).unwrap();
+
+        let entries = cache.list_entries().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].title, "Comfortably Numb");
+        assert_eq!(entries[0].artist, "Pink Floyd");
+        assert_eq!(entries[0].album, "The Wall");
+    }
+
+    #[test]
+    fn get_entry_meta_returns_stored_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = CacheManager::new(test_config(dir.path()));
+        let data = b"audio";
+        let hash = CacheStorage::hash_content(data);
+        let meta = SongMeta {
+            title: "Time".to_string(),
+            artist: "Pink Floyd".to_string(),
+            album: "DSOTM".to_string(),
+        };
+        cache.put_with_meta("song_2", data, &hash, &meta).unwrap();
+
+        let entry = cache.get_entry_meta("song_2").unwrap();
+        assert_eq!(entry.song_id, "song_2");
+        assert_eq!(entry.title, "Time");
+        assert_eq!(entry.artist, "Pink Floyd");
+        assert_eq!(entry.album, "DSOTM");
+    }
+
+    #[test]
+    fn get_entry_meta_returns_none_for_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = CacheManager::new(test_config(dir.path()));
+        assert!(cache.get_entry_meta("nonexistent").is_none());
+    }
+
+    #[test]
+    fn put_without_meta_has_empty_metadata_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = CacheManager::new(test_config(dir.path()));
+        let hash = CacheStorage::hash_content(b"data");
+        cache.put("song_x", b"data", &hash).unwrap();
+
+        let entries = cache.list_entries().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].title, "");
+        assert_eq!(entries[0].artist, "");
+    }
+
+    #[test]
+    fn cleanup_expired_removes_old_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = test_config(dir.path());
+        config.ttl_days = 10;
+        let cache = CacheManager::new(config);
+        let hash = CacheStorage::hash_content(b"data");
+        cache.put("song_fresh", b"data", &hash).unwrap();
+        cache.put("song_old", b"data", &hash).unwrap();
+
+        // Backdate song_old to 20 days ago
+        let meta_path = cache.storage.meta_path("song_old");
+        let old_date = (chrono::Utc::now() - chrono::Duration::days(20)).to_rfc3339();
+        let meta = serde_json::json!({
+            "song_id": "song_old",
+            "sha256": hash,
+            "cached_at": old_date,
+            "last_accessed": old_date,
+            "size_bytes": 4u64,
+        });
+        std::fs::write(meta_path, serde_json::to_string(&meta).unwrap()).unwrap();
+
+        cache.cleanup_expired().unwrap();
+        assert!(!cache.contains("song_old"));
+        assert!(cache.contains("song_fresh"));
+    }
+
+    #[test]
+    fn file_path_returns_local_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = CacheManager::new(test_config(dir.path()));
+        let hash = CacheStorage::hash_content(b"audio");
+        cache.put("song_1", b"audio", &hash).unwrap();
+
+        let path = cache.file_path("song_1");
+        assert!(path.exists());
+        assert!(path.to_str().unwrap().ends_with(".audio"));
     }
 
     #[test]
