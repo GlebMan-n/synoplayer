@@ -170,3 +170,26 @@ fn cli_playlist_play_help_shows_repeat() {
         .stdout(predicate::str::contains("--repeat"))
         .stdout(predicate::str::contains("--shuffle"));
 }
+
+// --- Stage 8: TUI ---
+
+#[test]
+fn cli_tui_help() {
+    Command::cargo_bin("synoplayer")
+        .unwrap()
+        .arg("tui")
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("interactive TUI"));
+}
+
+#[test]
+fn cli_help_lists_tui_command() {
+    Command::cargo_bin("synoplayer")
+        .unwrap()
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("tui"));
+}

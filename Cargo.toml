@@ -21,6 +21,8 @@ dirs = "6"
 sha2 = "0.10"
 chrono = { version = "0.4", features = ["serde"] }
 rand = "0.8"
+ratatui = "0.29"
+crossterm = "0.28"
 
 # rodio disabled until system deps (libasound2-dev) are available
 # rodio = "0.20"

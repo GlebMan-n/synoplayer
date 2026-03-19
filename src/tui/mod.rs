@@ -1,0 +1,122 @@
+pub mod app;
+pub mod handler;
+pub mod ui;
+
+use std::io;
+use std::time::{Duration, Instant};
+
+use crossterm::ExecutableCommand;
+use crossterm::event::{self, Event};
+use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
+use ratatui::Terminal;
+use ratatui::backend::CrosstermBackend;
+
+use crate::api::client::SynoClient;
+use crate::api::playlist::PlaylistApi;
+use crate::api::song::SongApi;
+use crate::cache::manager::CacheManager;
+use crate::config::model::AppConfig;
+use crate::player::engine::AudioEngine;
+
+use app::{App, StatefulList};
+use handler::TuiContext;
+
+/// Run the interactive TUI player.
+pub async fn run(client: SynoClient, config: AppConfig) -> anyhow::Result<()> {
+    let cache = CacheManager::new(config.cache.clone());
+    let engine = AudioEngine::new();
+
+    let mut app = App::new();
+    app.volume = config.player.default_volume;
+    app.status = "Loading library...".to_string();
+
+    // Load data upfront
+    load_data(&client, &mut app).await?;
+
+    let ctx = TuiContext {
+        client: &client,
+        engine: &engine,
+        cache: &cache,
+        cache_config: &config.cache,
+    };
+
+    // Setup terminal
+    terminal::enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    stdout.execute(EnterAlternateScreen)?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
+
+    // Panic hook to restore terminal
+    let original_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic| {
+        let _ = terminal::disable_raw_mode();
+        let _ = io::stdout().execute(LeaveAlternateScreen);
+        original_hook(panic);
+    }));
+
+    // Event loop
+    let tick_rate = Duration::from_millis(200);
+    let mut last_tick = Instant::now();
+
+    while app.running {
+        terminal.draw(|f| ui::render(f, &mut app))?;
+
+        let timeout = tick_rate.saturating_sub(last_tick.elapsed());
+        if event::poll(timeout)? {
+            match event::read()? {
+                Event::Key(key) => {
+                    // Ignore release events (crossterm sends both press and release on some terminals)
+                    if key.kind == crossterm::event::KeyEventKind::Press {
+                        handler::handle_key(&mut app, key, &ctx).await;
+                    }
+                }
+                Event::Resize(_, _) => {} // redraw on next loop iteration
+                _ => {}
+            }
+        }
+
+        if last_tick.elapsed() >= tick_rate {
+            if app.tick(&engine) {
+                // Track finished — advance queue
+                if let Err(e) = handler::advance_queue(&mut app, &ctx).await {
+                    app.status = format!("Error: {e}");
+                }
+            }
+            last_tick = Instant::now();
+        }
+    }
+
+    // Restore terminal
+    terminal::disable_raw_mode()?;
+    io::stdout().execute(LeaveAlternateScreen)?;
+    terminal.show_cursor()?;
+
+    // Remove panic hook
+    let _ = std::panic::take_hook();
+
+    Ok(())
+}
+
+async fn load_data(client: &SynoClient, app: &mut App) -> anyhow::Result<()> {
+    // Load songs
+    let song_api = SongApi::new(client);
+    let data = song_api.list(0, 500).await?;
+    app.songs = StatefulList::with_items(data.songs);
+
+    // Load playlists (both personal and shared)
+    let playlist_api = PlaylistApi::new(client);
+    let mut all_playlists = Vec::new();
+    for lib in &["personal", "shared"] {
+        let data = playlist_api.list(0, 200, Some(lib)).await?;
+        all_playlists.extend(data.playlists);
+    }
+    app.playlists = StatefulList::with_items(all_playlists);
+
+    app.status = format!(
+        "Loaded {} songs, {} playlists",
+        app.songs.items.len(),
+        app.playlists.items.len()
+    );
+    Ok(())
+}
