@@ -40,6 +40,7 @@ async fn main() -> anyhow::Result<()> {
     let command = match cli.command {
         Some(cmd) => cmd,
         None => {
+            check_audio_or_exit();
             let client = connect(&config).await?;
             synoplayer::tui::run(client, config).await?;
             return Ok(());
@@ -173,6 +174,7 @@ async fn main() -> anyhow::Result<()> {
 
         // --- Play ---
         cli::Commands::Play { target } => {
+            check_audio_or_exit();
             let cache = CacheManager::new(config.cache.clone());
             let history = PlayHistory::new();
 
@@ -620,11 +622,9 @@ async fn main() -> anyhow::Result<()> {
                     println!("Removed {song_id} from '{playlist}'.");
                 }
                 cli::PlaylistAction::Play {
-                    name,
-                    from,
-                    shuffle,
-                    repeat,
+                    name, from, shuffle, repeat,
                 } => {
+                    check_audio_or_exit();
                     let repeat_mode = match repeat.to_lowercase().as_str() {
                         "one" => synoplayer::player::queue::RepeatMode::One,
                         "all" => synoplayer::player::queue::RepeatMode::All,
@@ -839,6 +839,7 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
             cli::RadioAction::Play { station } => {
+                check_audio_or_exit();
                 let client = connect(&config).await?;
                 let api = RadioApi::new(&client);
                 let found = api.find(&station).await?;
@@ -945,14 +946,21 @@ async fn main() -> anyhow::Result<()> {
             }
         }
 
+        // --- Doctor ---
+        cli::Commands::Doctor => {
+            run_doctor(&config);
+        }
+
         // --- TUI ---
         cli::Commands::Tui => {
+            check_audio_or_exit();
             let client = connect(&config).await?;
             synoplayer::tui::run(client, config).await?;
         }
 
         // --- Headless daemon ---
         cli::Commands::NoTui => {
+            check_audio_or_exit();
             let client = connect(&config).await?;
             run_headless(client, config).await?;
         }
@@ -1770,4 +1778,98 @@ fn read_m3u_local(path: &str) -> anyhow::Result<Vec<String>> {
         .map(|l| l.to_string())
         .collect();
     Ok(entries)
+}
+
+/// Exit early if no audio player is available.
+fn check_audio_or_exit() {
+    use synoplayer::player::engine::check_audio_deps;
+    if let Err(msg) = check_audio_deps() {
+        eprintln!("Error: {msg}");
+        std::process::exit(1);
+    }
+}
+
+/// Run diagnostics and print system audio info.
+fn run_doctor(config: &AppConfig) {
+    use synoplayer::player::engine::check_audio_deps;
+
+    println!("=== SynoPlayer Doctor ===\n");
+
+    // 1. Audio player check
+    print!("Audio players: ");
+    let players = [
+        "ffplay", "mpv", "ffmpeg", "gst-launch-1.0",
+    ];
+    let found: Vec<&str> = players
+        .iter()
+        .filter(|p| {
+            std::process::Command::new("which")
+                .arg(**p)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success())
+        })
+        .copied()
+        .collect();
+    if found.is_empty() {
+        println!("NONE FOUND");
+    } else {
+        println!("{}", found.join(", "));
+    }
+
+    // 2. Sound server check
+    let has_pulse = std::process::Command::new("pactl")
+        .arg("info")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success());
+    println!(
+        "Sound server: {}",
+        if has_pulse { "PulseAudio/PipeWire (running)" }
+        else { "not detected" }
+    );
+
+    // 3. Config
+    let dev = &config.player.output_device;
+    println!(
+        "Output device: {}",
+        if dev.is_empty() { "(default)" } else { dev }
+    );
+    if has_pulse && !dev.is_empty() {
+        println!(
+            "  Note: PulseAudio is running, so output_device \
+             ALSA setting is ignored.\n  \
+             Audio routes through PulseAudio automatically.\n  \
+             To select a specific PulseAudio sink, use:\n    \
+             pactl set-default-sink <sink-name>"
+        );
+    }
+
+    // 4. ALSA devices
+    println!("\nALSA playback devices:");
+    let aplay = std::process::Command::new("aplay")
+        .args(["-l"])
+        .output();
+    match aplay {
+        Ok(out) => {
+            let text = String::from_utf8_lossy(&out.stdout);
+            for line in text.lines() {
+                if line.starts_with("card ") {
+                    println!("  {line}");
+                }
+            }
+        }
+        Err(_) => println!("  (aplay not found)"),
+    }
+
+    // 5. Overall verdict
+    println!();
+    match check_audio_deps() {
+        Ok(()) => println!("Status: OK — ready to play"),
+        Err(msg) => {
+            println!("Status: NOT READY\n\n{msg}");
+        }
+    }
 }

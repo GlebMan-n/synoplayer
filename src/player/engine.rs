@@ -170,6 +170,59 @@ impl Drop for AudioEngine {
     }
 }
 
+/// Check if PulseAudio or PipeWire sound server is running.
+/// When a sound server owns the ALSA device, we must route
+/// audio through it instead of opening ALSA directly.
+fn pulse_running() -> bool {
+    // pactl info succeeds when PulseAudio/PipeWire-pulse is up
+    try_run("pactl", &["info"])
+}
+
+/// Detect audio output method: "pulse", "alsa", or "auto".
+fn detect_output(device: &str) -> &'static str {
+    if pulse_running() {
+        "pulse"
+    } else if !device.is_empty() {
+        "alsa"
+    } else {
+        "auto"
+    }
+}
+
+/// Check that at least one audio backend is available.
+/// Returns Ok(()) or Err with a user-friendly message.
+pub fn check_audio_deps() -> Result<(), String> {
+    const PLAYERS: &[&str] = &[
+        "ffplay", "mpv", "ffmpeg", "gst-launch-1.0",
+    ];
+    if PLAYERS.iter().any(|p| which_exists(p)) {
+        return Ok(());
+    }
+    Err(
+        "No supported audio player found.\n\
+         Install one of the following:\n\
+         \n\
+         Ubuntu/Debian:\n  \
+           sudo apt install ffmpeg        # recommended\n  \
+           sudo apt install mpv\n\
+         \n\
+         Fedora:\n  \
+           sudo dnf install ffmpeg-free\n  \
+           sudo dnf install mpv\n\
+         \n\
+         Arch:\n  \
+           sudo pacman -S ffmpeg\n  \
+           sudo pacman -S mpv\n\
+         \n\
+         Alpine:\n  \
+           apk add ffmpeg\n\
+         \n\
+         Any of these provides the audio decoding and \
+         output needed for playback."
+            .to_string(),
+    )
+}
+
 /// Spawn an audio subprocess to play from a URL.
 fn spawn_audio_process(
     url: &str,
@@ -178,37 +231,71 @@ fn spawn_audio_process(
 ) -> crate::error::Result<Child> {
     let vol_str = volume.to_string();
     let vol_frac = format!("{:.2}", volume as f64 / 100.0);
-    // ALSA device: use configured device or "default"
-    let alsa_dev = if device.is_empty() { "default" } else { device };
+    let output = detect_output(device);
+    let alsa_dev = if device.is_empty() {
+        "default"
+    } else {
+        device
+    };
 
-    // 1. Players that can handle URLs directly
+    // 1. ffplay (handles URLs, good codec support)
     if which_exists("ffplay") {
-        // ffplay uses SDL; AUDIODEV env var controls ALSA device
-        return try_spawn_env(
-            "ffplay",
-            &[
-                "-nodisp", "-autoexit", "-loglevel", "quiet",
-                "-volume", &vol_str, url,
-            ],
-            device,
-        );
+        return match output {
+            "pulse" => {
+                // Let ffplay use PulseAudio via SDL
+                try_spawn_env_pulse(
+                    "ffplay",
+                    &[
+                        "-nodisp", "-autoexit",
+                        "-loglevel", "quiet",
+                        "-volume", &vol_str, url,
+                    ],
+                )
+            }
+            _ => {
+                try_spawn_env(
+                    "ffplay",
+                    &[
+                        "-nodisp", "-autoexit",
+                        "-loglevel", "quiet",
+                        "-volume", &vol_str, url,
+                    ],
+                    device,
+                )
+            }
+        };
     }
+
+    // 2. mpv
     if which_exists("mpv") {
         let vol_flag = format!("--volume={vol_str}");
         let mut args = vec![
-            "--no-video", "--really-quiet", vol_flag.as_str(), url,
+            "--no-video", "--really-quiet",
+            vol_flag.as_str(), url,
         ];
         let dev_flag;
-        if !device.is_empty() {
+        if output == "alsa" && !device.is_empty() {
             dev_flag = format!("--audio-device=alsa/{device}");
             args.insert(0, &dev_flag);
         }
         return try_spawn("mpv", &args);
     }
 
-    // 2. ffmpeg decoding to audio output
+    // 3. ffmpeg — try pulse first when sound server is up
     if which_exists("ffmpeg") {
         let af = format!("volume={vol_frac}");
+        if output == "pulse" {
+            if let Ok(child) = try_spawn(
+                "ffmpeg",
+                &[
+                    "-i", url, "-loglevel", "quiet",
+                    "-af", &af, "-f", "pulse", "default",
+                ],
+            ) {
+                return Ok(child);
+            }
+        }
+        // ALSA fallback (works when no sound server)
         if let Ok(child) = try_spawn(
             "ffmpeg",
             &[
@@ -218,23 +305,28 @@ fn spawn_audio_process(
         ) {
             return Ok(child);
         }
-        if let Ok(child) = try_spawn(
-            "ffmpeg",
-            &[
-                "-i", url, "-loglevel", "quiet",
-                "-af", &af, "-f", "pulse", "default",
-            ],
-        ) {
-            return Ok(child);
+        // Final pulse fallback
+        if output != "pulse" {
+            if let Ok(child) = try_spawn(
+                "ffmpeg",
+                &[
+                    "-i", url, "-loglevel", "quiet",
+                    "-af", &af, "-f", "pulse", "default",
+                ],
+            ) {
+                return Ok(child);
+            }
         }
     }
 
-    // 3. GStreamer pipeline
+    // 4. GStreamer
     if which_exists("gst-launch-1.0") {
-        let sink = if device.is_empty() {
-            "autoaudiosink".to_string()
-        } else {
-            format!("alsasink device={device}")
+        let sink = match output {
+            "alsa" if !device.is_empty() => {
+                format!("alsasink device={device}")
+            }
+            "pulse" => "pulsesink".to_string(),
+            _ => "autoaudiosink".to_string(),
         };
         let pipeline = format!(
             "souphttpsrc location={url} ! decodebin ! \
@@ -244,34 +336,14 @@ fn spawn_audio_process(
         return try_spawn("gst-launch-1.0", &[&pipeline]);
     }
 
-    // 4. curl piped through ffmpeg to audio device
-    if which_exists("curl") && which_exists("ffmpeg") {
-        let shell_cmd = format!(
-            "curl -sLk '{}' | ffmpeg -i pipe:0 \
-             -loglevel quiet -af volume={} -f alsa {}",
-            url, vol_frac, alsa_dev
-        );
-        return try_spawn("sh", &["-c", &shell_cmd]);
-    }
-
-    // 5. curl piped to pw-play/paplay (no volume control)
-    if which_exists("curl") {
-        if which_exists("pw-play") {
-            return try_spawn_shell(url, "pw-play -");
-        }
-        if which_exists("paplay") {
-            return try_spawn_shell(url, "paplay --raw");
-        }
-    }
-
     Err(crate::error::SynoError::Player(
-        "No audio player found. Install one of: \
-         ffplay, mpv, ffmpeg, or gstreamer."
+        "No audio player found. \
+         Run `synoplayer doctor` for help."
             .to_string(),
     ))
 }
 
-/// Spawn with AUDIODEV env var set for SDL-based players.
+/// Spawn with AUDIODEV env var set for direct ALSA access.
 fn try_spawn_env(
     cmd: &str,
     args: &[&str],
@@ -287,6 +359,24 @@ fn try_spawn_env(
         command.env("SDL_AUDIODRIVER", "alsa");
     }
     command
+        .spawn()
+        .map_err(|e| {
+            crate::error::SynoError::Player(
+                format!("Failed to spawn {cmd}: {e}"),
+            )
+        })
+}
+
+/// Spawn with SDL_AUDIODRIVER=pulseaudio for PulseAudio route.
+fn try_spawn_env_pulse(
+    cmd: &str,
+    args: &[&str],
+) -> crate::error::Result<Child> {
+    Command::new(cmd)
+        .args(args)
+        .env("SDL_AUDIODRIVER", "pulseaudio")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .spawn()
         .map_err(|e| {
             crate::error::SynoError::Player(
@@ -329,17 +419,6 @@ fn try_spawn(cmd: &str, args: &[&str]) -> crate::error::Result<Child> {
         .stderr(std::process::Stdio::null())
         .spawn()
         .map_err(|e| crate::error::SynoError::Player(format!("Failed to spawn {cmd}: {e}")))
-}
-
-/// Spawn `curl <url> | <shell_cmd>` via sh -c
-fn try_spawn_shell(url: &str, pipe_to: &str) -> crate::error::Result<Child> {
-    let shell_cmd = format!("curl -sLk '{}' | {}", url, pipe_to);
-    Command::new("sh")
-        .args(["-c", &shell_cmd])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .map_err(|e| crate::error::SynoError::Player(format!("Failed to spawn pipe: {e}")))
 }
 
 fn which_exists(name: &str) -> bool {

@@ -138,6 +138,8 @@ pub enum Commands {
     /// Headless daemon mode (no TUI, control via IPC)
     #[command(name = "no-tui")]
     NoTui,
+    /// Check system dependencies and audio setup
+    Doctor,
     /// Generate shell completion scripts
     Completion {
         /// Shell type
