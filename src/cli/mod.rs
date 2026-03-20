@@ -85,12 +85,12 @@ pub enum Commands {
     },
     /// List all playlists
     Playlists,
-    /// Rate a song (1-5)
-    Rate { song_id: String, rating: i32 },
-    /// Add to favorites
-    Favorite { song_id: String },
-    /// Remove from favorites
-    Unfavorite { song_id: String },
+    /// Rate a song (1-5), uses current track if omitted
+    Rate { rating: i32, song_id: Option<String> },
+    /// Add to favorites, uses current track if omitted
+    Favorite { song_id: Option<String> },
+    /// Remove from favorites, uses current track if omitted
+    Unfavorite { song_id: Option<String> },
     /// List favorites
     Favorites,
     /// Show lyrics
@@ -110,10 +110,10 @@ pub enum Commands {
         #[arg(default_value = "off")]
         mode: String,
     },
-    /// Download a track to local file
+    /// Download a track, uses current track if omitted
     Download {
         /// Song ID or name
-        song_id: String,
+        song_id: Option<String>,
         /// Output file path (default: current dir, auto-named)
         #[arg(long, short)]
         output: Option<String>,

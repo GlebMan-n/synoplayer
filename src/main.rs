@@ -359,6 +359,10 @@ async fn main() -> anyhow::Result<()> {
                 eprintln!("Rating must be 0-5 (0 to clear).");
                 std::process::exit(1);
             }
+            let song_id = match song_id {
+                Some(id) => id,
+                None => current_song_id()?,
+            };
             let client = connect(&config).await?;
             let api = SongApi::new(&client);
             api.set_rating(&song_id, rating).await?;
@@ -366,18 +370,28 @@ async fn main() -> anyhow::Result<()> {
                 println!("Rating cleared for {song_id}.");
             } else {
                 let stars = "*".repeat(rating as usize);
-                println!("Rating set to {stars} ({rating}/5) for {song_id}.");
+                println!(
+                    "Rating set to {stars} ({rating}/5) for {song_id}."
+                );
             }
         }
 
         // --- Favorites ---
         cli::Commands::Favorite { song_id } => {
+            let song_id = match song_id {
+                Some(id) => id,
+                None => current_song_id()?,
+            };
             let client = connect(&config).await?;
             let api = synoplayer::api::pin::PinApi::new(&client);
             api.pin(&song_id).await?;
             println!("Added to favorites: {song_id}");
         }
         cli::Commands::Unfavorite { song_id } => {
+            let song_id = match song_id {
+                Some(id) => id,
+                None => current_song_id()?,
+            };
             let client = connect(&config).await?;
             let api = synoplayer::api::pin::PinApi::new(&client);
             api.unpin(&song_id).await?;
@@ -411,17 +425,17 @@ async fn main() -> anyhow::Result<()> {
 
         // --- Lyrics ---
         cli::Commands::Lyrics { song_id } => {
-            if let Some(id) = song_id {
-                let client = connect(&config).await?;
-                let api = synoplayer::api::lyrics::LyricsApi::new(&client);
-                let data = api.get(&id).await?;
-                if data.lyrics.is_empty() {
-                    println!("No lyrics found for {id}.");
-                } else {
-                    println!("{}", data.lyrics);
-                }
+            let id = match song_id {
+                Some(id) => id,
+                None => current_song_id()?,
+            };
+            let client = connect(&config).await?;
+            let api = synoplayer::api::lyrics::LyricsApi::new(&client);
+            let data = api.get(&id).await?;
+            if data.lyrics.is_empty() {
+                println!("No lyrics found for {id}.");
             } else {
-                eprintln!("Specify song_id. Usage: synoplayer lyrics <song_id>");
+                println!("{}", data.lyrics);
             }
         }
 
@@ -833,6 +847,10 @@ async fn main() -> anyhow::Result<()> {
 
         // --- Download ---
         cli::Commands::Download { song_id, output } => {
+            let song_id = match song_id {
+                Some(id) => id,
+                None => current_song_id()?,
+            };
             let client = connect(&config).await?;
             let song = find_song(&client, &song_id).await?;
             let track = track_from_song(&song);
@@ -1393,7 +1411,8 @@ async fn run_headless(client: SynoClient, config: AppConfig) -> anyhow::Result<(
                             IpcResponse::ok_with_data(
                                 format!("{} - {}", t.artist, t.title),
                                 IpcData::NowPlaying {
-                                    title: t.title, artist: t.artist, album: t.album,
+                                    song_id: t.id, title: t.title,
+                                    artist: t.artist, album: t.album,
                                     position_secs: pos.as_secs(),
                                     duration_secs: t.duration.as_secs(),
                                     volume: engine.volume(),
@@ -1512,6 +1531,7 @@ fn handle_cli_ipc(
                 IpcResponse::ok_with_data(
                     format!("{} - {}", track.artist, track.title),
                     IpcData::NowPlaying {
+                        song_id: track.id.clone(),
                         title: track.title.clone(),
                         artist: track.artist.clone(),
                         album: track.album.clone(),
@@ -1564,6 +1584,21 @@ fn handle_cli_ipc(
     }
 }
 
+/// Get song_id of currently playing track via IPC.
+fn current_song_id() -> anyhow::Result<String> {
+    let resp = synoplayer::ipc::client::send_command(
+        &synoplayer::ipc::protocol::IpcRequest::Now,
+    )?;
+    match resp.data {
+        Some(synoplayer::ipc::protocol::IpcData::NowPlaying {
+            song_id, ..
+        }) => Ok(song_id),
+        _ => anyhow::bail!(
+            "Nothing is playing. Specify song_id explicitly."
+        ),
+    }
+}
+
 /// Print an IPC response to the user.
 fn print_ipc_response(response: synoplayer::ipc::protocol::IpcResponse) {
     use synoplayer::ipc::protocol::IpcData;
@@ -1576,6 +1611,7 @@ fn print_ipc_response(response: synoplayer::ipc::protocol::IpcResponse) {
 
     match response.data {
         Some(IpcData::NowPlaying {
+            song_id: _,
             title,
             artist,
             album,

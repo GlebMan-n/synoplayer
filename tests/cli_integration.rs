@@ -90,23 +90,25 @@ fn cli_rate_help() {
 }
 
 #[test]
-fn cli_favorite_requires_song_id() {
+fn cli_favorite_without_args_tries_current_track() {
+    // Without a running player, falls back to IPC error
     Command::cargo_bin("synoplayer")
         .unwrap()
         .arg("favorite")
         .assert()
         .failure()
-        .stderr(predicate::str::contains("Usage"));
+        .stderr(predicate::str::contains("No running player"));
 }
 
 #[test]
-fn cli_unfavorite_requires_song_id() {
+fn cli_unfavorite_without_args_tries_current_track() {
+    // Without a running player, falls back to IPC error
     Command::cargo_bin("synoplayer")
         .unwrap()
         .arg("unfavorite")
         .assert()
         .failure()
-        .stderr(predicate::str::contains("Usage"));
+        .stderr(predicate::str::contains("No running player"));
 }
 
 #[test]
@@ -123,13 +125,14 @@ fn cli_favorites_help() {
 // --- Stage 7: Download, History, Repeat ---
 
 #[test]
-fn cli_download_requires_song_id() {
+fn cli_download_without_args_tries_current_track() {
+    // Without a running player, falls back to IPC error
     Command::cargo_bin("synoplayer")
         .unwrap()
         .arg("download")
         .assert()
         .failure()
-        .stderr(predicate::str::contains("Usage"));
+        .stderr(predicate::str::contains("No running player"));
 }
 
 #[test]

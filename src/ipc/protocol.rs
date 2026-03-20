@@ -30,6 +30,7 @@ pub struct IpcResponse {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum IpcData {
     NowPlaying {
+        song_id: String,
         title: String,
         artist: String,
         album: String,
@@ -129,6 +130,7 @@ mod tests {
         let resp = IpcResponse::ok_with_data(
             "playing",
             IpcData::NowPlaying {
+                song_id: "music_1".to_string(),
                 title: "Song".to_string(),
                 artist: "Artist".to_string(),
                 album: "Album".to_string(),

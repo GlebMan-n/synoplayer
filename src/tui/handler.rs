@@ -541,6 +541,7 @@ pub async fn handle_ipc(
                 IpcResponse::ok_with_data(
                     format!("{} - {}", np.track.artist, np.track.title),
                     IpcData::NowPlaying {
+                        song_id: np.track.id.clone(),
                         title: np.track.title.clone(),
                         artist: np.track.artist.clone(),
                         album: np.track.album.clone(),
