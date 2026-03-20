@@ -27,7 +27,8 @@ use handler::TuiContext;
 /// Run the interactive TUI player.
 pub async fn run(client: SynoClient, config: AppConfig) -> anyhow::Result<()> {
     let cache = CacheManager::new(config.cache.clone());
-    let engine = AudioEngine::new();
+    let engine = AudioEngine::new()
+        .with_device(&config.player.output_device);
 
     let mut app = App::new();
     app.volume = config.player.default_volume;
@@ -99,15 +100,23 @@ pub async fn run(client: SynoClient, config: AppConfig) -> anyhow::Result<()> {
         }
 
         if last_tick.elapsed() >= tick_rate {
-            if app.tick(&engine) {
-                // Track finished — advance queue
-                match handler::advance_queue(&mut app, &ctx).await {
-                    Ok(()) => {}
-                    Err(e) => {
-                        app.now_playing = None;
-                        app.status = format!("Error: {e}");
+            match app.tick(&engine) {
+                Ok(true) => {
+                    // Track finished — advance queue
+                    match handler::advance_queue(&mut app, &ctx).await {
+                        Ok(()) => {}
+                        Err(e) => {
+                            app.now_playing = None;
+                            app.status = format!("Error: {e}");
+                        }
                     }
                 }
+                Err(msg) => {
+                    engine.stop();
+                    app.now_playing = None;
+                    app.status = format!("Player error: {msg}");
+                }
+                Ok(false) => {} // still playing
             }
             last_tick = Instant::now();
         }

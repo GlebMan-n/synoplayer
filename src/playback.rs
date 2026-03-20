@@ -148,10 +148,15 @@ pub fn record_history(history: &PlayHistory, track: &TrackInfo) {
 }
 
 /// Wait for playback subprocess to finish.
-pub async fn wait_for_playback(engine: &AudioEngine) {
+/// Returns Err if the player subprocess failed (e.g. bad device).
+pub async fn wait_for_playback(
+    engine: &AudioEngine,
+) -> Result<(), String> {
     loop {
-        if engine.check_finished() {
-            break;
+        match engine.check_finished() {
+            Ok(true) => return Ok(()),
+            Err(msg) => return Err(msg),
+            Ok(false) => {}
         }
         tokio::time::sleep(Duration::from_millis(500)).await;
     }

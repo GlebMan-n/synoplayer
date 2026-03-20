@@ -116,9 +116,18 @@ impl SynoClient {
 
         params.extend_from_slice(extra_params);
 
-        let response = self.http.get(&url).query(&params).send().await?;
+        tracing::debug!(
+            api, method, ?extra_params,
+            "API request -> {url}"
+        );
 
-        let api_response: ApiResponse<T> = response.json().await?;
+        let response = self.http.get(&url).query(&params).send().await?;
+        let body = response.text().await?;
+
+        tracing::debug!(api, method, "API response <- {body}");
+
+        let api_response: ApiResponse<T> =
+            serde_json::from_str(&body)?;
 
         if api_response.success {
             // Some API methods return {"success":true} with no data field.

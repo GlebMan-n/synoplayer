@@ -15,6 +15,7 @@ pub struct AudioEngine {
     child: Arc<Mutex<Option<Child>>>,
     volume: Arc<Mutex<u8>>,
     play_start: Arc<Mutex<Option<Instant>>>,
+    output_device: String,
 }
 
 impl AudioEngine {
@@ -25,7 +26,13 @@ impl AudioEngine {
             child: Arc::new(Mutex::new(None)),
             volume: Arc::new(Mutex::new(80)),
             play_start: Arc::new(Mutex::new(None)),
+            output_device: String::new(),
         }
+    }
+
+    pub fn with_device(mut self, device: &str) -> Self {
+        self.output_device = device.to_string();
+        self
     }
 
     pub fn state(&self) -> PlayerState {
@@ -51,7 +58,7 @@ impl AudioEngine {
         self.stop_subprocess();
 
         let vol = self.volume();
-        let child = spawn_audio_process(url, vol)?;
+        let child = spawn_audio_process(url, vol, &self.output_device)?;
         *self.child.lock().unwrap() = Some(child);
         *self.state.lock().unwrap() = PlayerState::play(track);
         *self.play_start.lock().unwrap() = Some(Instant::now());
@@ -75,7 +82,7 @@ impl AudioEngine {
         let mut state = self.state.lock().unwrap();
         if state.is_paused() {
             let vol = *self.volume.lock().unwrap();
-            let child = spawn_audio_process(url, vol)?;
+            let child = spawn_audio_process(url, vol, &self.output_device)?;
             *self.child.lock().unwrap() = Some(child);
             state.resume();
             *self.play_start.lock().unwrap() = Some(Instant::now());
@@ -90,22 +97,40 @@ impl AudioEngine {
         *self.play_start.lock().unwrap() = None;
     }
 
-    /// Check if the subprocess has finished (track ended).
-    pub fn check_finished(&self) -> bool {
+    /// Check if the subprocess has finished.
+    /// Returns Ok(true) if track ended normally, Ok(false) if
+    /// still playing, Err if the player subprocess failed.
+    pub fn check_finished(&self) -> Result<bool, String> {
         let mut child_guard = self.child.lock().unwrap();
         if let Some(ref mut child) = *child_guard {
             match child.try_wait() {
-                Ok(Some(_)) => {
+                Ok(Some(status)) => {
                     *child_guard = None;
-                    // Reset engine state so subsequent calls don't report finished again
+                    let elapsed = self
+                        .play_start
+                        .lock()
+                        .unwrap()
+                        .map(|s| s.elapsed())
+                        .unwrap_or(Duration::ZERO);
                     self.state.lock().unwrap().stop();
                     *self.play_start.lock().unwrap() = None;
-                    true
+
+                    // If process exited with error within 3s,
+                    // it likely failed to open audio device.
+                    if !status.success() && elapsed < Duration::from_secs(3) {
+                        Err(format!(
+                            "Audio player exited with {} after {:.1}s. \
+                             Check [player] output_device in config.",
+                            status, elapsed.as_secs_f64()
+                        ))
+                    } else {
+                        Ok(true)
+                    }
                 }
-                _ => false,
+                _ => Ok(false),
             }
         } else {
-            false
+            Ok(false)
         }
     }
 
@@ -146,37 +171,49 @@ impl Drop for AudioEngine {
 }
 
 /// Spawn an audio subprocess to play from a URL.
-fn spawn_audio_process(url: &str, volume: u8) -> crate::error::Result<Child> {
+fn spawn_audio_process(
+    url: &str,
+    volume: u8,
+    device: &str,
+) -> crate::error::Result<Child> {
     let vol_str = volume.to_string();
     let vol_frac = format!("{:.2}", volume as f64 / 100.0);
+    // ALSA device: use configured device or "default"
+    let alsa_dev = if device.is_empty() { "default" } else { device };
 
     // 1. Players that can handle URLs directly
     if which_exists("ffplay") {
-        return try_spawn(
+        // ffplay uses SDL; AUDIODEV env var controls ALSA device
+        return try_spawn_env(
             "ffplay",
             &[
                 "-nodisp", "-autoexit", "-loglevel", "quiet",
                 "-volume", &vol_str, url,
             ],
+            device,
         );
     }
     if which_exists("mpv") {
         let vol_flag = format!("--volume={vol_str}");
-        return try_spawn(
-            "mpv",
-            &["--no-video", "--really-quiet", &vol_flag, url],
-        );
+        let mut args = vec![
+            "--no-video", "--really-quiet", vol_flag.as_str(), url,
+        ];
+        let dev_flag;
+        if !device.is_empty() {
+            dev_flag = format!("--audio-device=alsa/{device}");
+            args.insert(0, &dev_flag);
+        }
+        return try_spawn("mpv", &args);
     }
 
     // 2. ffmpeg decoding to audio output
     if which_exists("ffmpeg") {
         let af = format!("volume={vol_frac}");
-        // Try ALSA first, then PulseAudio
         if let Ok(child) = try_spawn(
             "ffmpeg",
             &[
                 "-i", url, "-loglevel", "quiet",
-                "-af", &af, "-f", "alsa", "default",
+                "-af", &af, "-f", "alsa", alsa_dev,
             ],
         ) {
             return Ok(child);
@@ -194,10 +231,15 @@ fn spawn_audio_process(url: &str, volume: u8) -> crate::error::Result<Child> {
 
     // 3. GStreamer pipeline
     if which_exists("gst-launch-1.0") {
+        let sink = if device.is_empty() {
+            "autoaudiosink".to_string()
+        } else {
+            format!("alsasink device={device}")
+        };
         let pipeline = format!(
             "souphttpsrc location={url} ! decodebin ! \
              audioconvert ! audioresample ! \
-             volume volume={vol_frac} ! autoaudiosink"
+             volume volume={vol_frac} ! {sink}"
         );
         return try_spawn("gst-launch-1.0", &[&pipeline]);
     }
@@ -206,8 +248,8 @@ fn spawn_audio_process(url: &str, volume: u8) -> crate::error::Result<Child> {
     if which_exists("curl") && which_exists("ffmpeg") {
         let shell_cmd = format!(
             "curl -sLk '{}' | ffmpeg -i pipe:0 \
-             -loglevel quiet -af volume={} -f alsa default",
-            url, vol_frac
+             -loglevel quiet -af volume={} -f alsa {}",
+            url, vol_frac, alsa_dev
         );
         return try_spawn("sh", &["-c", &shell_cmd]);
     }
@@ -227,6 +269,30 @@ fn spawn_audio_process(url: &str, volume: u8) -> crate::error::Result<Child> {
          ffplay, mpv, ffmpeg, or gstreamer."
             .to_string(),
     ))
+}
+
+/// Spawn with AUDIODEV env var set for SDL-based players.
+fn try_spawn_env(
+    cmd: &str,
+    args: &[&str],
+    device: &str,
+) -> crate::error::Result<Child> {
+    let mut command = Command::new(cmd);
+    command
+        .args(args)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    if !device.is_empty() {
+        command.env("AUDIODEV", device);
+        command.env("SDL_AUDIODRIVER", "alsa");
+    }
+    command
+        .spawn()
+        .map_err(|e| {
+            crate::error::SynoError::Player(
+                format!("Failed to spawn {cmd}: {e}"),
+            )
+        })
 }
 
 /// Apply volume at system level for runtime changes.

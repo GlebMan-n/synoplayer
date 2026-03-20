@@ -211,13 +211,16 @@ impl App {
         self.playlist_detail = None;
     }
 
-    /// Returns true if a track just finished (caller should advance queue).
-    /// Note: does NOT clear now_playing — advance_queue needs queue_index from it.
-    pub fn tick(&mut self, engine: &AudioEngine) -> bool {
-        if self.now_playing.is_some() && engine.check_finished() {
-            return true;
+    /// Returns Ok(true) if a track just finished normally,
+    /// Ok(false) if still playing, Err if player subprocess failed.
+    pub fn tick(
+        &mut self,
+        engine: &AudioEngine,
+    ) -> Result<bool, String> {
+        if self.now_playing.is_some() {
+            return engine.check_finished();
         }
-        false
+        Ok(false)
     }
 
     pub fn set_now_playing(&mut self, track: TrackInfo, queue_index: usize) {

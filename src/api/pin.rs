@@ -21,7 +21,12 @@ impl<'a> PinApi<'a> {
     pub async fn pin(&self, id: &str) -> Result<()> {
         let _: serde_json::Value = self
             .client
-            .request("SYNO.AudioStation.Pin", 1, "pin", &[("id", id)])
+            .request(
+                "SYNO.AudioStation.Pin",
+                1,
+                "pin",
+                &[("items_id", id)],
+            )
             .await?;
         Ok(())
     }
@@ -29,7 +34,12 @@ impl<'a> PinApi<'a> {
     pub async fn unpin(&self, id: &str) -> Result<()> {
         let _: serde_json::Value = self
             .client
-            .request("SYNO.AudioStation.Pin", 1, "unpin", &[("id", id)])
+            .request(
+                "SYNO.AudioStation.Pin",
+                1,
+                "unpin",
+                &[("items_id", id)],
+            )
             .await?;
         Ok(())
     }
@@ -83,7 +93,7 @@ mod tests {
         Mock::given(method("GET"))
             .and(query_param("api", "SYNO.AudioStation.Pin"))
             .and(query_param("method", "pin"))
-            .and(query_param("id", "music_1"))
+            .and(query_param("items_id", "music_1"))
             .respond_with(
                 ResponseTemplate::new(200).set_body_json(serde_json::json!({"success": true})),
             )
@@ -101,7 +111,7 @@ mod tests {
         Mock::given(method("GET"))
             .and(query_param("api", "SYNO.AudioStation.Pin"))
             .and(query_param("method", "unpin"))
-            .and(query_param("id", "music_1"))
+            .and(query_param("items_id", "music_1"))
             .respond_with(
                 ResponseTemplate::new(200).set_body_json(serde_json::json!({"success": true})),
             )

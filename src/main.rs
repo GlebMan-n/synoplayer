@@ -192,9 +192,13 @@ async fn main() -> anyhow::Result<()> {
                     );
 
                     record_history(&history, &track);
-                    let engine = AudioEngine::new();
+                    let engine = AudioEngine::new()
+                        .with_device(&config.player.output_device);
                     engine.play_url(&source, track)?;
-                    wait_for_playback(&engine).await;
+                    if let Err(msg) = wait_for_playback(&engine).await {
+                        eprintln!("Player error: {msg}");
+                        std::process::exit(1);
+                    }
                     println!("Playback finished.");
                 }
                 Err(_) => {
@@ -207,9 +211,13 @@ async fn main() -> anyhow::Result<()> {
                             track.artist, track.title
                         );
                         record_history(&history, &track);
-                        let engine = AudioEngine::new();
+                        let engine = AudioEngine::new()
+                            .with_device(&config.player.output_device);
                         engine.play_url(source.to_str().unwrap_or(""), track)?;
-                        wait_for_playback(&engine).await;
+                        if let Err(msg) = wait_for_playback(&engine).await {
+                            eprintln!("Player error: {msg}");
+                            std::process::exit(1);
+                        }
                         println!("Playback finished.");
                     } else {
                         anyhow::bail!(
@@ -655,7 +663,8 @@ async fn main() -> anyhow::Result<()> {
                             repeat_label,
                         );
                         let cache = CacheManager::new(config.cache.clone());
-                        let engine = AudioEngine::new();
+                        let engine = AudioEngine::new()
+                            .with_device(&config.player.output_device);
                         let history = PlayHistory::new();
 
                         // Start IPC server for external control
@@ -696,8 +705,15 @@ async fn main() -> anyhow::Result<()> {
                             // Event-driven wait: poll engine + IPC commands
                             'wait: loop {
                                 // Check if track finished
-                                if engine.check_finished() {
-                                    break;
+                                match engine.check_finished() {
+                                    Ok(true) => break,
+                                    Err(msg) => {
+                                        eprintln!(
+                                            "Player error: {msg}"
+                                        );
+                                        break 'playback;
+                                    }
+                                    Ok(false) => {}
                                 }
 
                                 // Process IPC commands (non-blocking)
@@ -840,11 +856,19 @@ async fn main() -> anyhow::Result<()> {
                             album: String::new(),
                             duration: std::time::Duration::ZERO,
                         };
-                        let engine = AudioEngine::new();
+                        let engine = AudioEngine::new()
+                            .with_device(&config.player.output_device);
                         engine.play_url(&s.url, track)?;
                         loop {
-                            if engine.check_finished() {
-                                break;
+                            match engine.check_finished() {
+                                Ok(true) => break,
+                                Err(msg) => {
+                                    eprintln!(
+                                        "Player error: {msg}"
+                                    );
+                                    std::process::exit(1);
+                                }
+                                Ok(false) => {}
                             }
                             tokio::time::sleep(Duration::from_millis(500)).await;
                         }
@@ -1310,7 +1334,8 @@ async fn run_headless(client: SynoClient, config: AppConfig) -> anyhow::Result<(
     use synoplayer::player::queue::RepeatMode;
 
     let cache = CacheManager::new(config.cache.clone());
-    let engine = AudioEngine::new();
+    let engine = AudioEngine::new()
+        .with_device(&config.player.output_device);
 
     let (mut ipc_rx, _guard) = ipc::server::start()?;
     println!(
@@ -1334,7 +1359,19 @@ async fn run_headless(client: SynoClient, config: AppConfig) -> anyhow::Result<(
 
     loop {
         // Check if current track finished — auto-advance
-        if playing && engine.check_finished() {
+        let track_done = if playing {
+            match engine.check_finished() {
+                Ok(done) => done,
+                Err(msg) => {
+                    eprintln!("Player error: {msg}");
+                    playing = false;
+                    false
+                }
+            }
+        } else {
+            false
+        };
+        if track_done {
             let next = match repeat_mode {
                 RepeatMode::One => queue_idx,
                 RepeatMode::All if !queue.is_empty() => (queue_idx + 1) % queue.len(),
