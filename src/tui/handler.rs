@@ -2,7 +2,9 @@ use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::api::client::SynoClient;
 use crate::api::folder::FolderApi;
+use crate::api::pin::PinApi;
 use crate::api::playlist::PlaylistApi;
+use crate::api::song::SongApi;
 use crate::api::stream::StreamApi;
 use crate::api::types::Song;
 use crate::cache::manager::CacheManager;
@@ -128,6 +130,13 @@ pub async fn handle_key(app: &mut App, key: KeyEvent, ctx: &TuiContext<'_>) {
             }
         }
 
+        // --- Favorite toggle ---
+        KeyCode::Char('f') => {
+            if let Err(e) = handle_favorite_toggle(app, ctx).await {
+                app.status = format!("Error: {e}");
+            }
+        }
+
         // --- Volume ---
         KeyCode::Char('+') | KeyCode::Char('=') => {
             app.volume = (app.volume + 5).min(100);
@@ -146,6 +155,13 @@ pub async fn handle_key(app: &mut App, key: KeyEvent, ctx: &TuiContext<'_>) {
 
 async fn handle_enter(app: &mut App, ctx: &TuiContext<'_>) -> anyhow::Result<()> {
     match app.active_tab {
+        Tab::Favorites => {
+            // Play all favorites from selected position
+            let idx = app.favorites.selected().unwrap_or(0);
+            let mut queue = app.favorites.items.clone();
+            let start = apply_shuffle(app.shuffle, &mut queue, idx);
+            play_and_show_queue(app, ctx, queue, start).await?;
+        }
         Tab::Folders => {
             handle_folder_enter(app, ctx).await?;
         }
@@ -196,6 +212,16 @@ async fn handle_folder_enter(app: &mut App, ctx: &TuiContext<'_>) -> anyhow::Res
 
 async fn handle_space_play(app: &mut App, ctx: &TuiContext<'_>) -> anyhow::Result<()> {
     match app.active_tab {
+        Tab::Favorites => {
+            if app.favorites.items.is_empty() {
+                app.status = "No favorites to play".to_string();
+                return Ok(());
+            }
+            let idx = app.favorites.selected().unwrap_or(0);
+            let mut queue = app.favorites.items.clone();
+            let start = apply_shuffle(app.shuffle, &mut queue, idx);
+            play_and_show_queue(app, ctx, queue, start).await?;
+        }
         Tab::Folders => {
             handle_folder_space(app, ctx).await?;
         }
@@ -654,4 +680,35 @@ async fn rewind_queue(app: &mut App, ctx: &TuiContext<'_>) -> anyhow::Result<()>
         _ => return Ok(()),
     };
     play_queue_index(app, ctx, prev_index).await
+}
+
+/// Toggle favorite for the currently playing track.
+async fn handle_favorite_toggle(
+    app: &mut App,
+    ctx: &TuiContext<'_>,
+) -> anyhow::Result<()> {
+    let song_id = match &app.now_playing {
+        Some(np) => np.track.id.clone(),
+        None => {
+            app.status = "Nothing is playing".to_string();
+            return Ok(());
+        }
+    };
+
+    let pin_api = PinApi::new(ctx.client);
+    let is_fav = app.favorites.items.iter().any(|s| s.id == song_id);
+
+    if is_fav {
+        pin_api.unpin(&song_id).await?;
+        app.favorites.items.retain(|s| s.id != song_id);
+        app.status = format!("Removed from favorites: {song_id}");
+    } else {
+        pin_api.pin(&song_id).await?;
+        let song_api = SongApi::new(ctx.client);
+        if let Ok(song) = song_api.get_info(&song_id).await {
+            app.favorites.items.push(song);
+        }
+        app.status = format!("Added to favorites: {song_id}");
+    }
+    Ok(())
 }

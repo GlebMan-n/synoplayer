@@ -13,7 +13,9 @@ use ratatui::backend::CrosstermBackend;
 
 use crate::api::client::SynoClient;
 use crate::api::folder::FolderApi;
+use crate::api::pin::PinApi;
 use crate::api::playlist::PlaylistApi;
+use crate::api::song::SongApi;
 use crate::cache::manager::CacheManager;
 use crate::config::model::AppConfig;
 use crate::ipc;
@@ -123,6 +125,20 @@ pub async fn run(client: SynoClient, config: AppConfig) -> anyhow::Result<()> {
 }
 
 async fn load_data(client: &SynoClient, app: &mut App) -> anyhow::Result<()> {
+    // Load favorites (pinned songs only)
+    let pin_api = PinApi::new(client);
+    let song_api = SongApi::new(client);
+    let pin_data = pin_api.list().await?;
+    let mut fav_songs = Vec::new();
+    for item in &pin_data.items {
+        if item.item_type == "song" {
+            if let Ok(song) = song_api.get_info(&item.id).await {
+                fav_songs.push(song);
+            }
+        }
+    }
+    app.favorites = StatefulList::with_items(fav_songs);
+
     // Load playlists (both personal and shared)
     let playlist_api = PlaylistApi::new(client);
     let mut all_playlists = Vec::new();
@@ -138,7 +154,8 @@ async fn load_data(client: &SynoClient, app: &mut App) -> anyhow::Result<()> {
     app.folders = StatefulList::with_items(folder_data.items);
 
     app.status = format!(
-        "Loaded {} playlists, {} folders",
+        "Loaded {} favorites, {} playlists, {} folders",
+        app.favorites.items.len(),
         app.playlists.items.len(),
         app.folders.items.len()
     );

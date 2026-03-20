@@ -399,26 +399,40 @@ async fn main() -> anyhow::Result<()> {
         }
         cli::Commands::Favorites => {
             let client = connect(&config).await?;
-            let api = synoplayer::api::pin::PinApi::new(&client);
-            let data = api.list().await?;
-            if data.items.is_empty() {
-                println!("No favorites yet. Use `synoplayer favorite <song_id>` to add.");
+            let pin_api = synoplayer::api::pin::PinApi::new(&client);
+            let data = pin_api.list().await?;
+            let songs: Vec<_> = data
+                .items
+                .iter()
+                .filter(|i| i.item_type == "song")
+                .collect();
+            if songs.is_empty() {
+                println!(
+                    "No favorite songs. \
+                     Use `synoplayer favorite <song_id>` to add."
+                );
             } else {
-                println!("Favorites ({}):", data.total);
-                for item in &data.items {
-                    let display_name = if item.name.is_empty() {
-                        &item.title
+                let song_api = SongApi::new(&client);
+                println!("Favorites ({}):", songs.len());
+                for item in &songs {
+                    if let Ok(song) = song_api.get_info(&item.id).await
+                    {
+                        let t = track_from_song(&song);
+                        println!(
+                            "  {} - {} [{}] ({})",
+                            t.artist,
+                            t.title,
+                            t.album,
+                            item.id,
+                        );
                     } else {
-                        &item.name
-                    };
-                    let type_label = match item.item_type.as_str() {
-                        "song" => "Song",
-                        "album" => "Album",
-                        "artist" => "Artist",
-                        "playlist" => "Playlist",
-                        other => other,
-                    };
-                    println!("  [{type_label}] {display_name} ({})", item.id);
+                        let name = if item.name.is_empty() {
+                            &item.title
+                        } else {
+                            &item.name
+                        };
+                        println!("  {name} ({})", item.id);
+                    }
                 }
             }
         }

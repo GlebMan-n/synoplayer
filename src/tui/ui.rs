@@ -41,6 +41,7 @@ fn render_tabs(f: &mut Frame, area: Rect, app: &App) {
 
 fn render_content(f: &mut Frame, area: Rect, app: &mut App) {
     match app.active_tab {
+        Tab::Favorites => render_favorites(f, area, app),
         Tab::Folders => render_folders(f, area, app),
         Tab::Playlists => render_playlists(f, area, app),
         Tab::Queue => render_queue(f, area, app),
@@ -93,6 +94,56 @@ fn render_songs_table(f: &mut Frame, area: Rect, app: &mut App) {
         .highlight_symbol("► ");
 
     f.render_stateful_widget(table, area, state);
+}
+
+fn render_favorites(f: &mut Frame, area: Rect, app: &mut App) {
+    let header = Row::new(vec!["Artist", "Title", "Album", "Duration"])
+        .style(Style::default().fg(Color::DarkGray).bold())
+        .bottom_margin(1);
+
+    let playing_id = app
+        .now_playing
+        .as_ref()
+        .map(|np| np.track.id.as_str())
+        .unwrap_or("");
+
+    let rows = app.favorites.items.iter().map(|song| {
+        let (artist, title, album, dur) = extract_song_display(song);
+        let is_playing = song.id == playing_id;
+        let style = if is_playing {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default()
+        };
+        let marker = if is_playing { "▶ " } else { "" };
+        Row::new(vec![
+            Cell::from(format!("{marker}{artist}")),
+            Cell::from(title),
+            Cell::from(album),
+            Cell::from(dur),
+        ])
+        .style(style)
+    });
+
+    let widths = [
+        Constraint::Percentage(28),
+        Constraint::Percentage(35),
+        Constraint::Percentage(25),
+        Constraint::Percentage(12),
+    ];
+
+    let count = app.favorites.items.len();
+    let table = Table::new(rows, widths)
+        .header(header)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(format!(" Favorites ({count}) ")),
+        )
+        .row_highlight_style(Style::default().bg(Color::DarkGray))
+        .highlight_symbol("► ");
+
+    f.render_stateful_widget(table, area, &mut app.favorites.state);
 }
 
 fn render_folders(f: &mut Frame, area: Rect, app: &mut App) {
@@ -344,6 +395,8 @@ fn render_help(f: &mut Frame, area: Rect, app: &App) {
         Span::raw(format!(":Repeat({repeat_state}) ")),
         Span::styled("Tab", Style::default().fg(Color::Yellow)),
         Span::raw(":Switch "),
+        Span::styled("f", Style::default().fg(Color::Yellow)),
+        Span::raw(":Fav "),
         Span::styled("Ins", Style::default().fg(Color::Yellow)),
         Span::raw(":Select "),
         Span::styled("Esc", Style::default().fg(Color::Yellow)),
