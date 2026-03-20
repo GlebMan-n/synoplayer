@@ -40,12 +40,6 @@ async fn main() -> anyhow::Result<()> {
     let command = match cli.command {
         Some(cmd) => cmd,
         None => {
-            if cli.no_tui {
-                use clap::CommandFactory;
-                cli::Cli::command().print_help()?;
-                println!();
-                return Ok(());
-            }
             let client = connect(&config).await?;
             synoplayer::tui::run(client, config).await?;
             return Ok(());
@@ -900,6 +894,12 @@ async fn main() -> anyhow::Result<()> {
             synoplayer::tui::run(client, config).await?;
         }
 
+        // --- Headless daemon ---
+        cli::Commands::NoTui => {
+            let client = connect(&config).await?;
+            run_headless(client, config).await?;
+        }
+
         // --- Shuffle / Repeat ---
         cli::Commands::Shuffle { mode } => {
             print_ipc_response(synoplayer::ipc::client::send_command(
@@ -1268,6 +1268,220 @@ fn check_smart_filter(
         }
     }
     true
+}
+
+/// Run headless daemon: connect to NAS, start IPC server, wait for commands.
+async fn run_headless(client: SynoClient, config: AppConfig) -> anyhow::Result<()> {
+    use synoplayer::ipc;
+    use synoplayer::ipc::protocol::{IpcData, IpcRequest, IpcResponse, QueueTrack};
+    use synoplayer::player::queue::RepeatMode;
+
+    let cache = CacheManager::new(config.cache.clone());
+    let engine = AudioEngine::new();
+
+    let (mut ipc_rx, _guard) = ipc::server::start()?;
+    println!(
+        "SynoPlayer daemon started. Socket: {}",
+        ipc::socket_path().display()
+    );
+    println!("Waiting for commands... (Ctrl+C to stop)");
+
+    let queue: Vec<synoplayer::api::types::Song> = Vec::new();
+    let mut queue_idx: usize = 0;
+    let mut shuffle = false;
+    let mut repeat_mode = RepeatMode::Off;
+    let mut playing = false;
+
+    // Set up Ctrl+C handler
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    tokio::spawn(async move {
+        let _ = tokio::signal::ctrl_c().await;
+        let _ = shutdown_tx.send(());
+    });
+
+    loop {
+        // Check if current track finished — auto-advance
+        if playing && engine.check_finished() {
+            let next = match repeat_mode {
+                RepeatMode::One => queue_idx,
+                RepeatMode::All if !queue.is_empty() => (queue_idx + 1) % queue.len(),
+                RepeatMode::Off => queue_idx + 1,
+                _ => queue.len(), // empty queue
+            };
+            if next < queue.len() {
+                queue_idx = next;
+                if let Err(e) = play_song_headless(&client, &engine, &cache, &config.cache, &queue, queue_idx).await {
+                    eprintln!("Error advancing: {e}");
+                    playing = false;
+                }
+            } else {
+                println!("Queue finished.");
+                playing = false;
+            }
+        }
+
+        tokio::select! {
+            cmd = ipc_rx.recv() => {
+                let Some(cmd) = cmd else { break };
+                let response = match &cmd.request {
+                    IpcRequest::Stop => {
+                        engine.stop();
+                        playing = false;
+                        IpcResponse::ok("Stopped")
+                    }
+                    IpcRequest::Pause => {
+                        if playing {
+                            engine.pause();
+                            IpcResponse::ok("Paused")
+                        } else {
+                            IpcResponse::err("Nothing is playing")
+                        }
+                    }
+                    IpcRequest::Resume => {
+                        IpcResponse::err("Resume not supported with subprocess player")
+                    }
+                    IpcRequest::Next => {
+                        if queue.is_empty() {
+                            IpcResponse::err("Queue is empty")
+                        } else {
+                            let next = match repeat_mode {
+                                RepeatMode::One => queue_idx,
+                                RepeatMode::All => (queue_idx + 1) % queue.len(),
+                                RepeatMode::Off => queue_idx + 1,
+                            };
+                            if next < queue.len() {
+                                queue_idx = next;
+                                match play_song_headless(&client, &engine, &cache, &config.cache, &queue, queue_idx).await {
+                                    Ok(()) => {
+                                        playing = true;
+                                        let t = track_from_song(&queue[queue_idx]);
+                                        IpcResponse::ok(format!("[{}/{}] {} - {}", queue_idx + 1, queue.len(), t.artist, t.title))
+                                    }
+                                    Err(e) => IpcResponse::err(format!("Error: {e}")),
+                                }
+                            } else {
+                                playing = false;
+                                IpcResponse::ok("Queue finished")
+                            }
+                        }
+                    }
+                    IpcRequest::Prev => {
+                        if queue.is_empty() {
+                            IpcResponse::err("Queue is empty")
+                        } else {
+                            let prev = match repeat_mode {
+                                RepeatMode::One => queue_idx,
+                                RepeatMode::All if queue_idx == 0 => queue.len() - 1,
+                                _ => queue_idx.saturating_sub(1),
+                            };
+                            queue_idx = prev;
+                            match play_song_headless(&client, &engine, &cache, &config.cache, &queue, queue_idx).await {
+                                Ok(()) => {
+                                    playing = true;
+                                    let t = track_from_song(&queue[queue_idx]);
+                                    IpcResponse::ok(format!("[{}/{}] {} - {}", queue_idx + 1, queue.len(), t.artist, t.title))
+                                }
+                                Err(e) => IpcResponse::err(format!("Error: {e}")),
+                            }
+                        }
+                    }
+                    IpcRequest::Now => {
+                        if playing {
+                            let t = track_from_song(&queue[queue_idx]);
+                            let pos = engine.current_position();
+                            IpcResponse::ok_with_data(
+                                format!("{} - {}", t.artist, t.title),
+                                IpcData::NowPlaying {
+                                    title: t.title, artist: t.artist, album: t.album,
+                                    position_secs: pos.as_secs(),
+                                    duration_secs: t.duration.as_secs(),
+                                    volume: engine.volume(),
+                                    shuffle, repeat: match repeat_mode {
+                                        RepeatMode::Off => "off", RepeatMode::One => "one", RepeatMode::All => "all",
+                                    }.to_string(),
+                                    queue_index: queue_idx, queue_total: queue.len(),
+                                },
+                            )
+                        } else {
+                            IpcResponse::err("Nothing is playing")
+                        }
+                    }
+                    IpcRequest::Queue => {
+                        if queue.is_empty() {
+                            IpcResponse::err("Queue is empty")
+                        } else {
+                            let tracks: Vec<QueueTrack> = queue.iter().enumerate().map(|(i, s)| {
+                                let t = track_from_song(s);
+                                QueueTrack { index: i, title: t.title, artist: t.artist, duration_secs: t.duration.as_secs() }
+                            }).collect();
+                            IpcResponse::ok_with_data(
+                                format!("{} tracks", tracks.len()),
+                                IpcData::QueueList { current_index: queue_idx, tracks },
+                            )
+                        }
+                    }
+                    IpcRequest::Volume { level } => {
+                        engine.set_volume((*level).min(100));
+                        IpcResponse::ok(format!("Volume: {level}%"))
+                    }
+                    IpcRequest::Shuffle { mode } => {
+                        shuffle = mode == "on";
+                        IpcResponse::ok(format!("Shuffle {}", if shuffle { "ON" } else { "off" }))
+                    }
+                    IpcRequest::Repeat { mode } => {
+                        repeat_mode = match mode.as_str() {
+                            "one" => RepeatMode::One,
+                            "all" => RepeatMode::All,
+                            _ => RepeatMode::Off,
+                        };
+                        IpcResponse::ok(format!("Repeat: {mode}"))
+                    }
+                };
+                let _ = cmd.reply.send(response);
+            }
+            _ = &mut shutdown_rx => {
+                println!("\nShutting down...");
+                engine.stop();
+                break;
+            }
+            _ = tokio::time::sleep(Duration::from_millis(200)) => {
+                // tick for auto-advance check
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Play a specific song from the queue in headless mode.
+async fn play_song_headless(
+    client: &SynoClient,
+    engine: &AudioEngine,
+    cache: &CacheManager,
+    cache_config: &synoplayer::config::model::CacheConfig,
+    queue: &[synoplayer::api::types::Song],
+    idx: usize,
+) -> anyhow::Result<()> {
+    let song = &queue[idx];
+    let track = track_from_song(song);
+    let source = resolve_audio_source(client, song, cache, cache_config)
+        .await
+        .unwrap_or_else(|_| {
+            let stream_api = StreamApi::new(client);
+            stream_api.stream_url(&song.id).unwrap_or_default()
+        });
+    println!(
+        "[{}/{}] {} - {} [{}]",
+        idx + 1,
+        queue.len(),
+        track.artist,
+        track.title,
+        format_duration(track.duration)
+    );
+    let history = PlayHistory::new();
+    record_history(&history, &track);
+    engine.play_url(&source, track)?;
+    Ok(())
 }
 
 /// Handle an IPC request in CLI playlist-play mode.

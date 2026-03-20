@@ -25,13 +25,15 @@ fn cli_version_shows_version() {
 }
 
 #[test]
-fn cli_no_tui_shows_help() {
+fn cli_no_tui_is_valid_subcommand() {
+    // Verify no-tui is recognized as a valid subcommand (it will fail
+    // without a NAS connection, but should not fail with "unknown command")
     Command::cargo_bin("synoplayer")
         .unwrap()
-        .arg("--no-tui")
+        .arg("--help")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Usage"));
+        .stdout(predicate::str::contains("no-tui"));
 }
 
 #[test]

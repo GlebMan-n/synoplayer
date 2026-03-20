@@ -11,10 +11,6 @@ use clap::{Parser, Subcommand};
 #[command(about = "CLI audio player for Synology Audio Station")]
 #[command(version)]
 pub struct Cli {
-    /// Skip TUI and show help (by default synoplayer launches TUI)
-    #[arg(long)]
-    pub no_tui: bool,
-
     #[command(subcommand)]
     pub command: Option<Commands>,
 }
@@ -139,6 +135,9 @@ pub enum Commands {
     },
     /// Launch interactive TUI player
     Tui,
+    /// Headless daemon mode (no TUI, control via IPC)
+    #[command(name = "no-tui")]
+    NoTui,
     /// Generate shell completion scripts
     Completion {
         /// Shell type
