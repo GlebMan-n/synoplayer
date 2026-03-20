@@ -13,9 +13,8 @@ use ratatui::backend::CrosstermBackend;
 
 use crate::api::client::SynoClient;
 use crate::api::folder::FolderApi;
-use crate::api::pin::PinApi;
+use crate::api::favorites::FavoritesApi;
 use crate::api::playlist::PlaylistApi;
-use crate::api::song::SongApi;
 use crate::cache::manager::CacheManager;
 use crate::config::model::AppConfig;
 use crate::ipc;
@@ -35,13 +34,19 @@ pub async fn run(client: SynoClient, config: AppConfig) -> anyhow::Result<()> {
     app.status = "Loading library...".to_string();
 
     // Load data upfront
-    load_data(&client, &mut app).await?;
+    load_data(
+        &client,
+        &mut app,
+        &config.player.favorites_playlist,
+    )
+    .await?;
 
     let ctx = TuiContext {
         client: &client,
         engine: &engine,
         cache: &cache,
         cache_config: &config.cache,
+        favorites_playlist: &config.player.favorites_playlist,
     };
 
     // Start IPC server (non-fatal if it fails)
@@ -133,19 +138,14 @@ pub async fn run(client: SynoClient, config: AppConfig) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn load_data(client: &SynoClient, app: &mut App) -> anyhow::Result<()> {
-    // Load favorites (pinned songs only)
-    let pin_api = PinApi::new(client);
-    let song_api = SongApi::new(client);
-    let pin_data = pin_api.list().await?;
-    let mut fav_songs = Vec::new();
-    for item in &pin_data.items {
-        if item.item_type == "song" {
-            if let Ok(song) = song_api.get_info(&item.id).await {
-                fav_songs.push(song);
-            }
-        }
-    }
+async fn load_data(
+    client: &SynoClient,
+    app: &mut App,
+    favorites_playlist: &str,
+) -> anyhow::Result<()> {
+    // Load favorites from dedicated playlist
+    let fav_api = FavoritesApi::new(client, favorites_playlist);
+    let fav_songs = fav_api.list().await.unwrap_or_default();
     app.favorites = StatefulList::with_items(fav_songs);
 
     // Load playlists (both personal and shared)

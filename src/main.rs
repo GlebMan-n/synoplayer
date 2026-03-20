@@ -393,8 +393,11 @@ async fn main() -> anyhow::Result<()> {
                 None => current_song_id()?,
             };
             let client = connect(&config).await?;
-            let api = synoplayer::api::pin::PinApi::new(&client);
-            api.pin(&song_id).await?;
+            let fav = synoplayer::api::favorites::FavoritesApi::new(
+                &client,
+                &config.player.favorites_playlist,
+            );
+            fav.add(&song_id).await?;
             println!("Added to favorites: {song_id}");
         }
         cli::Commands::Unfavorite { song_id } => {
@@ -403,46 +406,33 @@ async fn main() -> anyhow::Result<()> {
                 None => current_song_id()?,
             };
             let client = connect(&config).await?;
-            let api = synoplayer::api::pin::PinApi::new(&client);
-            api.unpin(&song_id).await?;
+            let fav = synoplayer::api::favorites::FavoritesApi::new(
+                &client,
+                &config.player.favorites_playlist,
+            );
+            fav.remove(&song_id).await?;
             println!("Removed from favorites: {song_id}");
         }
         cli::Commands::Favorites => {
             let client = connect(&config).await?;
-            let pin_api = synoplayer::api::pin::PinApi::new(&client);
-            let data = pin_api.list().await?;
-            let songs: Vec<_> = data
-                .items
-                .iter()
-                .filter(|i| i.item_type == "song")
-                .collect();
+            let fav = synoplayer::api::favorites::FavoritesApi::new(
+                &client,
+                &config.player.favorites_playlist,
+            );
+            let songs = fav.list().await?;
             if songs.is_empty() {
                 println!(
                     "No favorite songs. \
                      Use `synoplayer favorite <song_id>` to add."
                 );
             } else {
-                let song_api = SongApi::new(&client);
                 println!("Favorites ({}):", songs.len());
-                for item in &songs {
-                    if let Ok(song) = song_api.get_info(&item.id).await
-                    {
-                        let t = track_from_song(&song);
-                        println!(
-                            "  {} - {} [{}] ({})",
-                            t.artist,
-                            t.title,
-                            t.album,
-                            item.id,
-                        );
-                    } else {
-                        let name = if item.name.is_empty() {
-                            &item.title
-                        } else {
-                            &item.name
-                        };
-                        println!("  {name} ({})", item.id);
-                    }
+                for song in &songs {
+                    let t = track_from_song(song);
+                    println!(
+                        "  {} - {} [{}] ({})",
+                        t.artist, t.title, t.album, song.id,
+                    );
                 }
             }
         }

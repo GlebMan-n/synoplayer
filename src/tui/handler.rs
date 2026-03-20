@@ -1,8 +1,8 @@
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::api::client::SynoClient;
+use crate::api::favorites::FavoritesApi;
 use crate::api::folder::FolderApi;
-use crate::api::pin::PinApi;
 use crate::api::playlist::PlaylistApi;
 use crate::api::song::SongApi;
 use crate::api::stream::StreamApi;
@@ -22,6 +22,7 @@ pub struct TuiContext<'a> {
     pub engine: &'a AudioEngine,
     pub cache: &'a CacheManager,
     pub cache_config: &'a CacheConfig,
+    pub favorites_playlist: &'a str,
 }
 
 pub async fn handle_key(app: &mut App, key: KeyEvent, ctx: &TuiContext<'_>) {
@@ -695,20 +696,29 @@ async fn handle_favorite_toggle(
         }
     };
 
-    let pin_api = PinApi::new(ctx.client);
-    let is_fav = app.favorites.items.iter().any(|s| s.id == song_id);
+    let fav_api = FavoritesApi::new(
+        ctx.client,
+        ctx.favorites_playlist,
+    );
+    let is_fav = app
+        .favorites
+        .items
+        .iter()
+        .any(|s| s.id == song_id);
 
     if is_fav {
-        pin_api.unpin(&song_id).await?;
+        fav_api.remove(&song_id).await?;
         app.favorites.items.retain(|s| s.id != song_id);
-        app.status = format!("Removed from favorites: {song_id}");
+        app.status =
+            format!("Removed from favorites: {song_id}");
     } else {
-        pin_api.pin(&song_id).await?;
+        fav_api.add(&song_id).await?;
         let song_api = SongApi::new(ctx.client);
         if let Ok(song) = song_api.get_info(&song_id).await {
             app.favorites.items.push(song);
         }
-        app.status = format!("Added to favorites: {song_id}");
+        app.status =
+            format!("Added to favorites: {song_id}");
     }
     Ok(())
 }

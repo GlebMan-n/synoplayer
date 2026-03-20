@@ -46,6 +46,12 @@ pub struct PlayerConfig {
     pub output_device: String,
     #[serde(default = "default_buffer_size")]
     pub buffer_size_kb: u32,
+    #[serde(default = "default_favorites_playlist")]
+    pub favorites_playlist: String,
+}
+
+fn default_favorites_playlist() -> String {
+    "Favorites".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -135,6 +141,7 @@ impl Default for PlayerConfig {
             default_volume: default_volume(),
             output_device: String::new(),
             buffer_size_kb: default_buffer_size(),
+            favorites_playlist: default_favorites_playlist(),
         }
     }
 }

@@ -4,6 +4,7 @@ pub mod auth;
 pub mod client;
 pub mod composer;
 pub mod cover;
+pub mod favorites;
 pub mod folder;
 pub mod genre;
 pub mod lyrics;

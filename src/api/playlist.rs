@@ -107,18 +107,32 @@ impl<'a> PlaylistApi<'a> {
         Ok(())
     }
 
-    pub async fn update_songs(&self, id: &str, song_ids: &[&str]) -> Result<()> {
-        let songs = song_ids.join(",");
-        let _: serde_json::Value = self
-            .client
-            .request(
-                "SYNO.AudioStation.Playlist",
-                3,
-                "updatesongs",
-                &[("id", id), ("songs", &songs)],
-            )
-            .await?;
-        Ok(())
+    /// Replace all songs in a playlist (delete + recreate).
+    ///
+    /// The Synology `updatesongs` API has inconsistent behavior
+    /// across versions (v2 appends, v3 returns 411), so we
+    /// delete and recreate the playlist with the new song list.
+    pub async fn update_songs(
+        &self,
+        id: &str,
+        song_ids: &[&str],
+    ) -> Result<()> {
+        // Get current name before deleting
+        let detail = self.get_info(id).await?;
+        let pl = detail.into_playlist().ok_or_else(|| {
+            crate::error::SynoError::Api {
+                code: 0,
+                message: "Playlist not found".to_string(),
+            }
+        })?;
+        let name = pl.name;
+        let library = if id.contains("shared") {
+            "shared"
+        } else {
+            "personal"
+        };
+        self.delete(id).await?;
+        self.create_with_songs(&name, library, song_ids).await
     }
 
     /// Create a smart playlist with filter rules.
@@ -263,21 +277,56 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn update_songs_joins_ids() {
+    async fn update_songs_deletes_and_recreates() {
         let server = MockServer::start().await;
+        // 1. getinfo to read current name
         Mock::given(method("GET"))
-            .and(query_param("method", "updatesongs"))
+            .and(query_param("method", "getinfo"))
+            .and(query_param("id", "playlist_personal_normal/1"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({
+                        "success": true,
+                        "data": {
+                            "playlists": [{
+                                "id": "playlist_personal_normal/1",
+                                "name": "Test PL",
+                                "additional": { "songs": [] }
+                            }]
+                        }
+                    })),
+            )
+            .mount(&server)
+            .await;
+        // 2. delete
+        Mock::given(method("GET"))
+            .and(query_param("method", "delete"))
+            .and(query_param("id", "playlist_personal_normal/1"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"success": true})),
+            )
+            .mount(&server)
+            .await;
+        // 3. create with new songs
+        Mock::given(method("GET"))
+            .and(query_param("method", "create"))
+            .and(query_param("name", "Test PL"))
             .and(query_param("songs", "music_1,music_2,music_3"))
             .respond_with(
-                ResponseTemplate::new(200).set_body_json(serde_json::json!({"success": true})),
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"success": true, "data": {}})),
             )
             .mount(&server)
             .await;
 
         let client = client_with_playlist_api(&server).await;
         let api = PlaylistApi::new(&client);
-        api.update_songs("playlist_1", &["music_1", "music_2", "music_3"])
-            .await
-            .unwrap();
+        api.update_songs(
+            "playlist_personal_normal/1",
+            &["music_1", "music_2", "music_3"],
+        )
+        .await
+        .unwrap();
     }
 }
