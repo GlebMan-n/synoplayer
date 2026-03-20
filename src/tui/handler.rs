@@ -64,13 +64,13 @@ pub async fn handle_key(app: &mut App, key: KeyEvent, ctx: &TuiContext<'_>) {
 
         // --- Playback ---
         KeyCode::Char('n') => {
-            if let Err(e) = advance_queue(app, ctx).await {
+            if let Err(e) = skip_next(app, ctx).await {
                 app.now_playing = None;
                 app.status = format!("Error: {e}");
             }
         }
         KeyCode::Char('p') => {
-            if let Err(e) = rewind_queue(app, ctx).await {
+            if let Err(e) = skip_prev(app, ctx).await {
                 app.status = format!("Error: {e}");
             }
         }
@@ -483,6 +483,55 @@ async fn play_queue_index(app: &mut App, ctx: &TuiContext<'_>, index: usize) -> 
 }
 
 /// Advance to next track in queue (respects repeat mode).
+/// Explicit next: always advances, even in repeat-one mode.
+async fn skip_next(
+    app: &mut App,
+    ctx: &TuiContext<'_>,
+) -> anyhow::Result<()> {
+    let next_index = match &app.now_playing {
+        Some(np) => match app.repeat_mode {
+            RepeatMode::All if !app.queue.is_empty() => {
+                (np.queue_index + 1) % app.queue.len()
+            }
+            _ => np.queue_index + 1,
+        },
+        None => return Ok(()),
+    };
+
+    if next_index < app.queue.len() {
+        play_queue_index(app, ctx, next_index).await
+    } else {
+        app.now_playing = None;
+        app.status = "Queue finished.".to_string();
+        Ok(())
+    }
+}
+
+/// Explicit prev: always goes back, even in repeat-one mode.
+async fn skip_prev(
+    app: &mut App,
+    ctx: &TuiContext<'_>,
+) -> anyhow::Result<()> {
+    let prev_index = match &app.now_playing {
+        Some(np) => match app.repeat_mode {
+            RepeatMode::All if np.queue_index == 0 => {
+                app.queue.len() - 1
+            }
+            _ => {
+                if np.queue_index > 0 {
+                    np.queue_index - 1
+                } else {
+                    return Ok(());
+                }
+            }
+        },
+        _ => return Ok(()),
+    };
+    play_queue_index(app, ctx, prev_index).await
+}
+
+/// Auto-advance: called when track finishes naturally.
+/// Respects repeat-one (replays same track).
 pub async fn advance_queue(app: &mut App, ctx: &TuiContext<'_>) -> anyhow::Result<()> {
     let next_index = match &app.now_playing {
         Some(np) => match app.repeat_mode {
@@ -528,7 +577,7 @@ pub async fn handle_ipc(
             app.stop_playback(ctx.engine);
             IpcResponse::ok("Stopped")
         }
-        IpcRequest::Next => match advance_queue(app, ctx).await {
+        IpcRequest::Next => match skip_next(app, ctx).await {
             Ok(()) => {
                 if let Some(ref np) = app.now_playing {
                     IpcResponse::ok(format!(
@@ -547,7 +596,7 @@ pub async fn handle_ipc(
                 IpcResponse::err(format!("Error: {e}"))
             }
         },
-        IpcRequest::Prev => match rewind_queue(app, ctx).await {
+        IpcRequest::Prev => match skip_prev(app, ctx).await {
             Ok(()) => {
                 if let Some(ref np) = app.now_playing {
                     IpcResponse::ok(format!(
@@ -658,30 +707,6 @@ pub async fn handle_ipc(
 }
 
 /// Go back to previous track in queue (respects repeat mode).
-async fn rewind_queue(app: &mut App, ctx: &TuiContext<'_>) -> anyhow::Result<()> {
-    let prev_index = match &app.now_playing {
-        Some(np) => match app.repeat_mode {
-            RepeatMode::One => np.queue_index,
-            RepeatMode::All if app.queue.is_empty() => return Ok(()),
-            RepeatMode::All => {
-                if np.queue_index == 0 {
-                    app.queue.len() - 1
-                } else {
-                    np.queue_index - 1
-                }
-            }
-            RepeatMode::Off => {
-                if np.queue_index > 0 {
-                    np.queue_index - 1
-                } else {
-                    return Ok(());
-                }
-            }
-        },
-        _ => return Ok(()),
-    };
-    play_queue_index(app, ctx, prev_index).await
-}
 
 /// Toggle favorite for the currently playing track.
 async fn handle_favorite_toggle(

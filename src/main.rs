@@ -693,7 +693,7 @@ async fn main() -> anyhow::Result<()> {
                             engine.play_url(&source, track)?;
 
                             // Event-driven wait: poll engine + IPC commands
-                            'wait: loop {
+                            loop {
                                 // Check if track finished
                                 match engine.check_finished() {
                                     Ok(true) => break,
@@ -727,12 +727,28 @@ async fn main() -> anyhow::Result<()> {
                                             }
                                             synoplayer::ipc::protocol::IpcRequest::Next => {
                                                 engine.stop();
+                                                // Explicit next always advances,
+                                                // even in repeat-one mode
+                                                idx = match current_repeat {
+                                                    synoplayer::player::queue::RepeatMode::All => {
+                                                        (idx + 1) % queue.len()
+                                                    }
+                                                    _ => idx + 1,
+                                                };
                                                 let _ = cmd.reply.send(response);
-                                                break 'wait;
+                                                if idx >= queue.len() {
+                                                    break 'playback;
+                                                }
+                                                continue 'playback;
                                             }
                                             synoplayer::ipc::protocol::IpcRequest::Prev => {
                                                 engine.stop();
-                                                idx = if idx > 0 { idx - 1 } else { 0 };
+                                                idx = match current_repeat {
+                                                    synoplayer::player::queue::RepeatMode::All if idx == 0 => {
+                                                        queue.len() - 1
+                                                    }
+                                                    _ => idx.saturating_sub(1),
+                                                };
                                                 let _ = cmd.reply.send(response);
                                                 continue 'playback;
                                             }
@@ -1412,10 +1428,13 @@ async fn run_headless(client: SynoClient, config: AppConfig) -> anyhow::Result<(
                         if queue.is_empty() {
                             IpcResponse::err("Queue is empty")
                         } else {
+                            // Explicit next always advances,
+                            // even in repeat-one mode
                             let next = match repeat_mode {
-                                RepeatMode::One => queue_idx,
-                                RepeatMode::All => (queue_idx + 1) % queue.len(),
-                                RepeatMode::Off => queue_idx + 1,
+                                RepeatMode::All => {
+                                    (queue_idx + 1) % queue.len()
+                                }
+                                _ => queue_idx + 1,
                             };
                             if next < queue.len() {
                                 queue_idx = next;
@@ -1437,9 +1456,12 @@ async fn run_headless(client: SynoClient, config: AppConfig) -> anyhow::Result<(
                         if queue.is_empty() {
                             IpcResponse::err("Queue is empty")
                         } else {
+                            // Explicit prev always goes back,
+                            // even in repeat-one mode
                             let prev = match repeat_mode {
-                                RepeatMode::One => queue_idx,
-                                RepeatMode::All if queue_idx == 0 => queue.len() - 1,
+                                RepeatMode::All if queue_idx == 0 => {
+                                    queue.len() - 1
+                                }
                                 _ => queue_idx.saturating_sub(1),
                             };
                             queue_idx = prev;
