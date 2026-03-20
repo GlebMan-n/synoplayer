@@ -41,14 +41,17 @@ impl AudioEngine {
     }
 
     pub fn set_volume(&self, vol: u8) {
-        *self.volume.lock().unwrap() = vol.min(100);
+        let vol = vol.min(100);
+        *self.volume.lock().unwrap() = vol;
+        apply_system_volume(vol);
     }
 
     /// Start playing from a URL. Sets state to Playing.
     pub fn play_url(&self, url: &str, track: TrackInfo) -> crate::error::Result<()> {
         self.stop_subprocess();
 
-        let child = spawn_audio_process(url)?;
+        let vol = self.volume();
+        let child = spawn_audio_process(url, vol)?;
         *self.child.lock().unwrap() = Some(child);
         *self.state.lock().unwrap() = PlayerState::play(track);
         *self.play_start.lock().unwrap() = Some(Instant::now());
@@ -71,7 +74,8 @@ impl AudioEngine {
     pub fn resume_url(&self, url: &str) -> crate::error::Result<()> {
         let mut state = self.state.lock().unwrap();
         if state.is_paused() {
-            let child = spawn_audio_process(url)?;
+            let vol = *self.volume.lock().unwrap();
+            let child = spawn_audio_process(url, vol)?;
             *self.child.lock().unwrap() = Some(child);
             state.resume();
             *self.play_start.lock().unwrap() = Some(Instant::now());
@@ -142,30 +146,47 @@ impl Drop for AudioEngine {
 }
 
 /// Spawn an audio subprocess to play from a URL.
-fn spawn_audio_process(url: &str) -> crate::error::Result<Child> {
+fn spawn_audio_process(url: &str, volume: u8) -> crate::error::Result<Child> {
+    let vol_str = volume.to_string();
+    let vol_frac = format!("{:.2}", volume as f64 / 100.0);
+
     // 1. Players that can handle URLs directly
     if which_exists("ffplay") {
         return try_spawn(
             "ffplay",
-            &["-nodisp", "-autoexit", "-loglevel", "quiet", url],
+            &[
+                "-nodisp", "-autoexit", "-loglevel", "quiet",
+                "-volume", &vol_str, url,
+            ],
         );
     }
     if which_exists("mpv") {
-        return try_spawn("mpv", &["--no-video", "--really-quiet", url]);
+        let vol_flag = format!("--volume={vol_str}");
+        return try_spawn(
+            "mpv",
+            &["--no-video", "--really-quiet", &vol_flag, url],
+        );
     }
 
     // 2. ffmpeg decoding to audio output
     if which_exists("ffmpeg") {
+        let af = format!("volume={vol_frac}");
         // Try ALSA first, then PulseAudio
         if let Ok(child) = try_spawn(
             "ffmpeg",
-            &["-i", url, "-loglevel", "quiet", "-f", "alsa", "default"],
+            &[
+                "-i", url, "-loglevel", "quiet",
+                "-af", &af, "-f", "alsa", "default",
+            ],
         ) {
             return Ok(child);
         }
         if let Ok(child) = try_spawn(
             "ffmpeg",
-            &["-i", url, "-loglevel", "quiet", "-f", "pulse", "default"],
+            &[
+                "-i", url, "-loglevel", "quiet",
+                "-af", &af, "-f", "pulse", "default",
+            ],
         ) {
             return Ok(child);
         }
@@ -174,7 +195,9 @@ fn spawn_audio_process(url: &str) -> crate::error::Result<Child> {
     // 3. GStreamer pipeline
     if which_exists("gst-launch-1.0") {
         let pipeline = format!(
-            "souphttpsrc location={url} ! decodebin ! audioconvert ! audioresample ! autoaudiosink"
+            "souphttpsrc location={url} ! decodebin ! \
+             audioconvert ! audioresample ! \
+             volume volume={vol_frac} ! autoaudiosink"
         );
         return try_spawn("gst-launch-1.0", &[&pipeline]);
     }
@@ -182,13 +205,14 @@ fn spawn_audio_process(url: &str) -> crate::error::Result<Child> {
     // 4. curl piped through ffmpeg to audio device
     if which_exists("curl") && which_exists("ffmpeg") {
         let shell_cmd = format!(
-            "curl -sLk '{}' | ffmpeg -i pipe:0 -loglevel quiet -f alsa default",
-            url
+            "curl -sLk '{}' | ffmpeg -i pipe:0 \
+             -loglevel quiet -af volume={} -f alsa default",
+            url, vol_frac
         );
         return try_spawn("sh", &["-c", &shell_cmd]);
     }
 
-    // 5. curl piped to pw-play/paplay (only works for WAV/PCM, not MP3)
+    // 5. curl piped to pw-play/paplay (no volume control)
     if which_exists("curl") {
         if which_exists("pw-play") {
             return try_spawn_shell(url, "pw-play -");
@@ -199,8 +223,37 @@ fn spawn_audio_process(url: &str) -> crate::error::Result<Child> {
     }
 
     Err(crate::error::SynoError::Player(
-        "No audio player found. Install one of: ffplay, mpv, ffmpeg, or gstreamer.".to_string(),
+        "No audio player found. Install one of: \
+         ffplay, mpv, ffmpeg, or gstreamer."
+            .to_string(),
     ))
+}
+
+/// Apply volume at system level for runtime changes.
+fn apply_system_volume(vol: u8) {
+    let pct = format!("{}%", vol);
+
+    // pactl (PulseAudio / PipeWire-pulse)
+    if try_run("pactl", &["set-sink-volume", "@DEFAULT_SINK@", &pct]) {
+        return;
+    }
+    // wpctl (WirePlumber / PipeWire native)
+    let frac = format!("{:.2}", vol as f64 / 100.0);
+    if try_run("wpctl", &["set-volume", "@DEFAULT_AUDIO_SINK@", &frac]) {
+        return;
+    }
+    // amixer (ALSA fallback)
+    let _ = try_run("amixer", &["sset", "Master", &pct]);
+}
+
+/// Run a command silently, return true on success.
+fn try_run(cmd: &str, args: &[&str]) -> bool {
+    Command::new(cmd)
+        .args(args)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
 }
 
 fn try_spawn(cmd: &str, args: &[&str]) -> crate::error::Result<Child> {
