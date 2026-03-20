@@ -7,6 +7,7 @@ use crate::api::stream::StreamApi;
 use crate::api::types::Song;
 use crate::cache::manager::CacheManager;
 use crate::config::model::CacheConfig;
+use crate::ipc::protocol::{IpcData, IpcRequest, IpcResponse, QueueTrack};
 use crate::playback;
 use crate::player::engine::AudioEngine;
 use crate::player::queue::RepeatMode;
@@ -472,6 +473,159 @@ pub async fn advance_queue(app: &mut App, ctx: &TuiContext<'_>) -> anyhow::Resul
         app.now_playing = None;
         app.status = "Queue finished.".to_string();
         Ok(())
+    }
+}
+
+/// Handle an IPC command. Maps IPC requests to the same operations as key presses.
+pub async fn handle_ipc(
+    app: &mut App,
+    ctx: &TuiContext<'_>,
+    request: IpcRequest,
+) -> IpcResponse {
+    match request {
+        IpcRequest::Pause => {
+            if app.now_playing.is_some() {
+                ctx.engine.pause();
+                app.status = "Paused (via IPC)".to_string();
+                IpcResponse::ok("Paused")
+            } else {
+                IpcResponse::err("Nothing is playing")
+            }
+        }
+        IpcRequest::Resume => {
+            // Resume not fully supported with subprocess model
+            app.status = "Resume not supported (subprocess player)".to_string();
+            IpcResponse::err("Resume not supported with subprocess player")
+        }
+        IpcRequest::Stop => {
+            app.stop_playback(ctx.engine);
+            IpcResponse::ok("Stopped")
+        }
+        IpcRequest::Next => match advance_queue(app, ctx).await {
+            Ok(()) => {
+                if let Some(ref np) = app.now_playing {
+                    IpcResponse::ok(format!(
+                        "[{}/{}] {} - {}",
+                        np.queue_index + 1,
+                        app.queue.len(),
+                        np.track.artist,
+                        np.track.title,
+                    ))
+                } else {
+                    IpcResponse::ok("Queue finished")
+                }
+            }
+            Err(e) => {
+                app.now_playing = None;
+                IpcResponse::err(format!("Error: {e}"))
+            }
+        },
+        IpcRequest::Prev => match rewind_queue(app, ctx).await {
+            Ok(()) => {
+                if let Some(ref np) = app.now_playing {
+                    IpcResponse::ok(format!(
+                        "[{}/{}] {} - {}",
+                        np.queue_index + 1,
+                        app.queue.len(),
+                        np.track.artist,
+                        np.track.title,
+                    ))
+                } else {
+                    IpcResponse::ok("At start of queue")
+                }
+            }
+            Err(e) => IpcResponse::err(format!("Error: {e}")),
+        },
+        IpcRequest::Now => {
+            if let Some(ref np) = app.now_playing {
+                IpcResponse::ok_with_data(
+                    format!("{} - {}", np.track.artist, np.track.title),
+                    IpcData::NowPlaying {
+                        title: np.track.title.clone(),
+                        artist: np.track.artist.clone(),
+                        album: np.track.album.clone(),
+                        position_secs: np.elapsed().as_secs(),
+                        duration_secs: np.track.duration.as_secs(),
+                        volume: app.volume,
+                        shuffle: app.shuffle,
+                        repeat: match app.repeat_mode {
+                            RepeatMode::Off => "off".to_string(),
+                            RepeatMode::One => "one".to_string(),
+                            RepeatMode::All => "all".to_string(),
+                        },
+                        queue_index: np.queue_index,
+                        queue_total: app.queue.len(),
+                    },
+                )
+            } else {
+                IpcResponse::err("Nothing is playing")
+            }
+        }
+        IpcRequest::Queue => {
+            let current_index = app
+                .now_playing
+                .as_ref()
+                .map(|np| np.queue_index)
+                .unwrap_or(0);
+            let tracks: Vec<QueueTrack> = app
+                .queue
+                .iter()
+                .enumerate()
+                .map(|(i, song)| {
+                    let track = playback::track_from_song(song);
+                    QueueTrack {
+                        index: i,
+                        title: track.title,
+                        artist: track.artist,
+                        duration_secs: track.duration.as_secs(),
+                    }
+                })
+                .collect();
+            if tracks.is_empty() {
+                IpcResponse::err("Queue is empty")
+            } else {
+                IpcResponse::ok_with_data(
+                    format!("{} tracks in queue", tracks.len()),
+                    IpcData::QueueList {
+                        current_index,
+                        tracks,
+                    },
+                )
+            }
+        }
+        IpcRequest::Volume { level } => {
+            app.volume = level.min(100);
+            ctx.engine.set_volume(app.volume);
+            app.status = format!("Volume: {}%", app.volume);
+            IpcResponse::ok(format!("Volume set to {}%", app.volume))
+        }
+        IpcRequest::Shuffle { mode } => {
+            app.shuffle = mode == "on";
+            app.status = format!(
+                "Shuffle: {}",
+                if app.shuffle { "ON" } else { "off" }
+            );
+            IpcResponse::ok(format!(
+                "Shuffle {}",
+                if app.shuffle { "ON" } else { "off" }
+            ))
+        }
+        IpcRequest::Repeat { mode } => {
+            app.repeat_mode = match mode.as_str() {
+                "one" => RepeatMode::One,
+                "all" => RepeatMode::All,
+                _ => RepeatMode::Off,
+            };
+            app.status = format!(
+                "Repeat: {}",
+                match app.repeat_mode {
+                    RepeatMode::Off => "off",
+                    RepeatMode::One => "one",
+                    RepeatMode::All => "all",
+                }
+            );
+            IpcResponse::ok(format!("Repeat: {mode}"))
+        }
     }
 }
 

@@ -16,6 +16,7 @@ use crate::api::folder::FolderApi;
 use crate::api::playlist::PlaylistApi;
 use crate::cache::manager::CacheManager;
 use crate::config::model::AppConfig;
+use crate::ipc;
 use crate::player::engine::AudioEngine;
 
 use app::{App, StatefulList};
@@ -39,6 +40,17 @@ pub async fn run(client: SynoClient, config: AppConfig) -> anyhow::Result<()> {
         cache: &cache,
         cache_config: &config.cache,
     };
+
+    // Start IPC server (non-fatal if it fails)
+    let ipc_state = ipc::server::try_start();
+    let mut ipc_rx = ipc_state.as_ref().map(|(_, _)| ()).and(None);
+    let _ipc_guard: Option<ipc::SocketGuard>;
+    if let Some((rx, guard)) = ipc_state {
+        ipc_rx = Some(rx);
+        _ipc_guard = Some(guard);
+    } else {
+        _ipc_guard = None;
+    }
 
     // Setup terminal
     terminal::enable_raw_mode()?;
@@ -73,6 +85,14 @@ pub async fn run(client: SynoClient, config: AppConfig) -> anyhow::Result<()> {
                 }
                 Event::Resize(_, _) => {} // redraw on next loop iteration
                 _ => {}
+            }
+        }
+
+        // Process IPC commands (non-blocking)
+        if let Some(ref mut rx) = ipc_rx {
+            while let Ok(cmd) = rx.try_recv() {
+                let response = handler::handle_ipc(&mut app, &ctx, cmd.request).await;
+                let _ = cmd.reply.send(response);
             }
         }
 

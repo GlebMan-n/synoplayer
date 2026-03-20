@@ -229,26 +229,54 @@ async fn main() -> anyhow::Result<()> {
 
         // --- Now ---
         cli::Commands::Now => {
-            eprintln!("No active player session. Use `synoplayer play <song>` to start.");
+            print_ipc_response(synoplayer::ipc::client::send_command(
+                &synoplayer::ipc::protocol::IpcRequest::Now,
+            )?);
         }
 
         // --- Queue ---
         cli::Commands::Queue => {
-            eprintln!("No active player session.");
+            print_ipc_response(synoplayer::ipc::client::send_command(
+                &synoplayer::ipc::protocol::IpcRequest::Queue,
+            )?);
         }
 
         // --- Volume ---
         cli::Commands::Volume { level } => {
-            eprintln!("Volume control requires active player session. (Would set to {level}%)");
+            print_ipc_response(synoplayer::ipc::client::send_command(
+                &synoplayer::ipc::protocol::IpcRequest::Volume { level },
+            )?);
         }
 
-        // --- Pause/Resume/Stop/Next/Prev ---
-        cli::Commands::Pause
-        | cli::Commands::Resume
-        | cli::Commands::Stop
-        | cli::Commands::Next
-        | cli::Commands::Prev => {
-            eprintln!("No active player session. Playback controls work during `synoplayer play`.");
+        // --- Pause ---
+        cli::Commands::Pause => {
+            print_ipc_response(synoplayer::ipc::client::send_command(
+                &synoplayer::ipc::protocol::IpcRequest::Pause,
+            )?);
+        }
+        // --- Resume ---
+        cli::Commands::Resume => {
+            print_ipc_response(synoplayer::ipc::client::send_command(
+                &synoplayer::ipc::protocol::IpcRequest::Resume,
+            )?);
+        }
+        // --- Stop ---
+        cli::Commands::Stop => {
+            print_ipc_response(synoplayer::ipc::client::send_command(
+                &synoplayer::ipc::protocol::IpcRequest::Stop,
+            )?);
+        }
+        // --- Next ---
+        cli::Commands::Next => {
+            print_ipc_response(synoplayer::ipc::client::send_command(
+                &synoplayer::ipc::protocol::IpcRequest::Next,
+            )?);
+        }
+        // --- Prev ---
+        cli::Commands::Prev => {
+            print_ipc_response(synoplayer::ipc::client::send_command(
+                &synoplayer::ipc::protocol::IpcRequest::Prev,
+            )?);
         }
 
         // --- Albums ---
@@ -604,18 +632,32 @@ async fn main() -> anyhow::Result<()> {
                             },
                             repeat_label,
                         );
-                        let stream_api = StreamApi::new(&client);
                         let cache = CacheManager::new(config.cache.clone());
                         let engine = AudioEngine::new();
                         let history = PlayHistory::new();
 
+                        // Start IPC server for external control
+                        let ipc_state = synoplayer::ipc::server::try_start();
+                        let mut ipc_rx = None;
+                        let _ipc_guard: Option<synoplayer::ipc::SocketGuard>;
+                        if let Some((rx, guard)) = ipc_state {
+                            ipc_rx = Some(rx);
+                            _ipc_guard = Some(guard);
+                        } else {
+                            _ipc_guard = None;
+                        }
+
                         let mut idx = start;
-                        loop {
+                        let mut current_repeat = repeat_mode;
+                        let mut current_shuffle = shuffle;
+
+                        'playback: loop {
                             let song = &queue[idx];
                             let track = track_from_song(song);
                             let source = resolve_audio_source(&client, song, &cache, &config.cache)
                                 .await
                                 .unwrap_or_else(|_| {
+                                    let stream_api = StreamApi::new(&client);
                                     stream_api.stream_url(&song.id).unwrap_or_default()
                                 });
                             println!(
@@ -628,12 +670,69 @@ async fn main() -> anyhow::Result<()> {
                             );
                             record_history(&history, &track);
                             engine.play_url(&source, track)?;
-                            wait_for_playback(&engine).await;
+
+                            // Event-driven wait: poll engine + IPC commands
+                            loop {
+                                // Check if track finished
+                                if engine.check_finished() {
+                                    break;
+                                }
+
+                                // Process IPC commands (non-blocking)
+                                if let Some(ref mut rx) = ipc_rx {
+                                    while let Ok(cmd) = rx.try_recv() {
+                                        let response = handle_cli_ipc(
+                                            &cmd.request,
+                                            &engine,
+                                            &queue,
+                                            idx,
+                                            current_shuffle,
+                                            current_repeat,
+                                        );
+                                        // Handle commands that change playback state
+                                        match &cmd.request {
+                                            synoplayer::ipc::protocol::IpcRequest::Stop => {
+                                                let _ = cmd.reply.send(response);
+                                                engine.stop();
+                                                println!("Stopped.");
+                                                break 'playback;
+                                            }
+                                            synoplayer::ipc::protocol::IpcRequest::Next => {
+                                                let _ = cmd.reply.send(response);
+                                                break; // break inner loop to advance
+                                            }
+                                            synoplayer::ipc::protocol::IpcRequest::Prev => {
+                                                engine.stop();
+                                                idx = if idx > 0 { idx - 1 } else { 0 };
+                                                let _ = cmd.reply.send(response);
+                                                continue 'playback;
+                                            }
+                                            synoplayer::ipc::protocol::IpcRequest::Shuffle { mode } => {
+                                                current_shuffle = mode == "on";
+                                                let _ = cmd.reply.send(response);
+                                            }
+                                            synoplayer::ipc::protocol::IpcRequest::Repeat { mode } => {
+                                                current_repeat = match mode.as_str() {
+                                                    "one" => synoplayer::player::queue::RepeatMode::One,
+                                                    "all" => synoplayer::player::queue::RepeatMode::All,
+                                                    _ => synoplayer::player::queue::RepeatMode::Off,
+                                                };
+                                                let _ = cmd.reply.send(response);
+                                            }
+                                            _ => {
+                                                let _ = cmd.reply.send(response);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                tokio::time::sleep(Duration::from_millis(200)).await;
+                            }
 
                             // Advance based on repeat mode
-                            match repeat_mode {
+                            match current_repeat {
                                 synoplayer::player::queue::RepeatMode::One => {
-                                    // Stay on same track, loop forever
+                                    // Stay on same track
                                 }
                                 synoplayer::player::queue::RepeatMode::All => {
                                     idx = (idx + 1) % queue.len();
@@ -803,10 +902,14 @@ async fn main() -> anyhow::Result<()> {
 
         // --- Shuffle / Repeat ---
         cli::Commands::Shuffle { mode } => {
-            eprintln!("Shuffle {mode}: no active player session. Start playback first.");
+            print_ipc_response(synoplayer::ipc::client::send_command(
+                &synoplayer::ipc::protocol::IpcRequest::Shuffle { mode },
+            )?);
         }
         cli::Commands::Repeat { mode } => {
-            eprintln!("Repeat {mode}: no active player session. Start playback first.");
+            print_ipc_response(synoplayer::ipc::client::send_command(
+                &synoplayer::ipc::protocol::IpcRequest::Repeat { mode },
+            )?);
         }
 
         // --- Completion ---
@@ -1165,6 +1268,154 @@ fn check_smart_filter(
         }
     }
     true
+}
+
+/// Handle an IPC request in CLI playlist-play mode.
+fn handle_cli_ipc(
+    request: &synoplayer::ipc::protocol::IpcRequest,
+    engine: &AudioEngine,
+    queue: &[synoplayer::api::types::Song],
+    idx: usize,
+    shuffle: bool,
+    repeat_mode: synoplayer::player::queue::RepeatMode,
+) -> synoplayer::ipc::protocol::IpcResponse {
+    use synoplayer::ipc::protocol::{IpcData, IpcRequest, IpcResponse, QueueTrack};
+
+    match request {
+        IpcRequest::Pause => {
+            engine.pause();
+            IpcResponse::ok("Paused")
+        }
+        IpcRequest::Resume => IpcResponse::err("Resume not supported with subprocess player"),
+        IpcRequest::Stop => IpcResponse::ok("Stopping"),
+        IpcRequest::Next => IpcResponse::ok("Next track"),
+        IpcRequest::Prev => IpcResponse::ok("Previous track"),
+        IpcRequest::Now => {
+            let state = engine.state();
+            if let Some(track) = state.track() {
+                let position = engine.current_position();
+                IpcResponse::ok_with_data(
+                    format!("{} - {}", track.artist, track.title),
+                    IpcData::NowPlaying {
+                        title: track.title.clone(),
+                        artist: track.artist.clone(),
+                        album: track.album.clone(),
+                        position_secs: position.as_secs(),
+                        duration_secs: track.duration.as_secs(),
+                        volume: engine.volume(),
+                        shuffle,
+                        repeat: match repeat_mode {
+                            synoplayer::player::queue::RepeatMode::Off => "off",
+                            synoplayer::player::queue::RepeatMode::One => "one",
+                            synoplayer::player::queue::RepeatMode::All => "all",
+                        }
+                        .to_string(),
+                        queue_index: idx,
+                        queue_total: queue.len(),
+                    },
+                )
+            } else {
+                IpcResponse::err("Nothing is playing")
+            }
+        }
+        IpcRequest::Queue => {
+            let tracks: Vec<QueueTrack> = queue
+                .iter()
+                .enumerate()
+                .map(|(i, song)| {
+                    let t = track_from_song(song);
+                    QueueTrack {
+                        index: i,
+                        title: t.title,
+                        artist: t.artist,
+                        duration_secs: t.duration.as_secs(),
+                    }
+                })
+                .collect();
+            IpcResponse::ok_with_data(
+                format!("{} tracks", tracks.len()),
+                IpcData::QueueList {
+                    current_index: idx,
+                    tracks,
+                },
+            )
+        }
+        IpcRequest::Volume { level } => {
+            engine.set_volume(level.min(&100).to_owned());
+            IpcResponse::ok(format!("Volume: {level}%"))
+        }
+        IpcRequest::Shuffle { mode } => IpcResponse::ok(format!("Shuffle: {mode}")),
+        IpcRequest::Repeat { mode } => IpcResponse::ok(format!("Repeat: {mode}")),
+    }
+}
+
+/// Print an IPC response to the user.
+fn print_ipc_response(response: synoplayer::ipc::protocol::IpcResponse) {
+    use synoplayer::ipc::protocol::IpcData;
+    use synoplayer::playback::format_duration;
+
+    if !response.ok {
+        eprintln!("{}", response.message);
+        return;
+    }
+
+    match response.data {
+        Some(IpcData::NowPlaying {
+            title,
+            artist,
+            album,
+            position_secs,
+            duration_secs,
+            volume,
+            shuffle,
+            repeat,
+            queue_index,
+            queue_total,
+        }) => {
+            println!(
+                "Playing: {} - {} [{}]",
+                artist,
+                title,
+                format_duration(std::time::Duration::from_secs(duration_secs))
+            );
+            println!(
+                "Album: {} | Position: {} | Volume: {}%",
+                album,
+                format_duration(std::time::Duration::from_secs(position_secs)),
+                volume,
+            );
+            println!(
+                "Track {}/{} | Shuffle: {} | Repeat: {}",
+                queue_index + 1,
+                queue_total,
+                if shuffle { "ON" } else { "off" },
+                repeat,
+            );
+        }
+        Some(IpcData::QueueList {
+            current_index,
+            tracks,
+        }) => {
+            println!("Queue ({} tracks):", tracks.len());
+            for track in &tracks {
+                let marker = if track.index == current_index {
+                    "▶"
+                } else {
+                    " "
+                };
+                println!(
+                    " {marker} {:3}. {} - {} [{}]",
+                    track.index + 1,
+                    track.artist,
+                    track.title,
+                    format_duration(std::time::Duration::from_secs(track.duration_secs)),
+                );
+            }
+        }
+        None => {
+            println!("{}", response.message);
+        }
+    }
 }
 
 /// Generate shell completion script as a string.
