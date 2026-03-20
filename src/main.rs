@@ -1777,6 +1777,81 @@ fn check_audio_or_exit() {
         eprintln!("Error: {msg}");
         std::process::exit(1);
     }
+    ensure_pulse_sink();
+}
+
+/// If PulseAudio is running with a null sink, try to
+/// auto-configure the first available ALSA playback device.
+fn ensure_pulse_sink() {
+    use std::process::Command;
+
+    // Check if PulseAudio is running
+    let info = match Command::new("pactl")
+        .arg("info")
+        .output()
+    {
+        Ok(out) if out.status.success() => {
+            String::from_utf8_lossy(&out.stdout).to_string()
+        }
+        _ => return, // no PulseAudio
+    };
+
+    // Check if default sink is null
+    let is_null = info.lines().any(|l| {
+        l.contains("Default Sink:") && l.contains("null")
+    });
+    if !is_null {
+        return;
+    }
+
+    // Find first ALSA playback device
+    let aplay = match Command::new("aplay")
+        .args(["-l"])
+        .output()
+    {
+        Ok(out) => {
+            String::from_utf8_lossy(&out.stdout).to_string()
+        }
+        _ => return,
+    };
+
+    // Parse "card N: ... device M: ..."
+    for line in aplay.lines() {
+        if !line.starts_with("card ") {
+            continue;
+        }
+        let card = line
+            .split(':')
+            .next()
+            .and_then(|s| s.trim().strip_prefix("card "))
+            .and_then(|s| s.trim().parse::<u32>().ok());
+        let dev = line
+            .split("device ")
+            .nth(1)
+            .and_then(|s| {
+                s.split(':').next()
+            })
+            .and_then(|s| s.trim().parse::<u32>().ok());
+        if let (Some(c), Some(d)) = (card, dev) {
+            let device = format!("plughw:{c},{d}");
+            eprintln!(
+                "PulseAudio: no output configured, \
+                 adding {device}..."
+            );
+            let _ = Command::new("pactl")
+                .args([
+                    "load-module",
+                    "module-alsa-sink",
+                    &format!("device={device}"),
+                    "sink_name=auto_alsa",
+                ])
+                .output();
+            let _ = Command::new("pactl")
+                .args(["set-default-sink", "auto_alsa"])
+                .output();
+            return;
+        }
+    }
 }
 
 /// Run diagnostics and print system audio info.
@@ -1817,9 +1892,44 @@ fn run_doctor(config: &AppConfig) {
         .is_ok_and(|s| s.success());
     println!(
         "Sound server: {}",
-        if has_pulse { "PulseAudio/PipeWire (running)" }
-        else { "not detected" }
+        if has_pulse {
+            "PulseAudio/PipeWire (running)"
+        } else {
+            "not detected"
+        }
     );
+
+    // 2b. Check PulseAudio default sink
+    if has_pulse {
+        let sink_out = std::process::Command::new("pactl")
+            .args(["info"])
+            .output();
+        if let Ok(out) = sink_out {
+            let text = String::from_utf8_lossy(&out.stdout);
+            for line in text.lines() {
+                if line.contains("Default Sink:") {
+                    let sink = line
+                        .split(':')
+                        .nth(1)
+                        .unwrap_or("")
+                        .trim();
+                    println!("Default sink: {sink}");
+                    if sink.contains("null") {
+                        println!(
+                            "  WARNING: Default sink is null \
+                             — no audio output!\n  \
+                             Fix: pactl load-module \
+                             module-alsa-sink \
+                             device=plughw:1,0 \
+                             sink_name=usb_audio\n  \
+                             Then: pactl set-default-sink \
+                             usb_audio"
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     // 3. Config
     let dev = &config.player.output_device;
@@ -1829,10 +1939,10 @@ fn run_doctor(config: &AppConfig) {
     );
     if has_pulse && !dev.is_empty() {
         println!(
-            "  Note: PulseAudio is running, so output_device \
-             ALSA setting is ignored.\n  \
-             Audio routes through PulseAudio automatically.\n  \
-             To select a specific PulseAudio sink, use:\n    \
+            "  Note: PulseAudio is running, so \
+             output_device ALSA setting is ignored.\n  \
+             Audio routes through PulseAudio. To select \
+             a specific sink:\n    \
              pactl set-default-sink <sink-name>"
         );
     }
@@ -1854,7 +1964,29 @@ fn run_doctor(config: &AppConfig) {
         Err(_) => println!("  (aplay not found)"),
     }
 
-    // 5. Overall verdict
+    // 5. PulseAudio sinks
+    if has_pulse {
+        println!("\nPulseAudio sinks:");
+        let sinks = std::process::Command::new("pactl")
+            .args(["list", "sinks", "short"])
+            .output();
+        match sinks {
+            Ok(out) => {
+                let text =
+                    String::from_utf8_lossy(&out.stdout);
+                if text.trim().is_empty() {
+                    println!("  (none)");
+                } else {
+                    for line in text.lines() {
+                        println!("  {line}");
+                    }
+                }
+            }
+            Err(_) => println!("  (pactl not available)"),
+        }
+    }
+
+    // 6. Overall verdict
     println!();
     match check_audio_deps() {
         Ok(()) => println!("Status: OK — ready to play"),
