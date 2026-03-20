@@ -666,7 +666,7 @@ async fn main() -> anyhow::Result<()> {
                             engine.play_url(&source, track)?;
 
                             // Event-driven wait: poll engine + IPC commands
-                            loop {
+                            'wait: loop {
                                 // Check if track finished
                                 if engine.check_finished() {
                                     break;
@@ -692,8 +692,9 @@ async fn main() -> anyhow::Result<()> {
                                                 break 'playback;
                                             }
                                             synoplayer::ipc::protocol::IpcRequest::Next => {
+                                                engine.stop();
                                                 let _ = cmd.reply.send(response);
-                                                break; // break inner loop to advance
+                                                break 'wait;
                                             }
                                             synoplayer::ipc::protocol::IpcRequest::Prev => {
                                                 engine.stop();
